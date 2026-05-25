@@ -153,6 +153,135 @@ def ScrapeSesiones(
     asyncio.run(Run())
 
 
+# Scrapea las asistencias de Diputados LXVI por diputado o backfill completo.
+# Solo Diputados/LXVI por ahora. --Diputado X corre uno solo (smoke ~10s).
+# --Backfill recorre los 500 diputados (~58 min).
+@ScrapeApp.command(name="Asistencias")
+def ScrapeAsistencias(
+    Camara: str = typer.Option("Diputados", help="Camara: Diputados."),
+    Legislatura: str = typer.Option("LXVI", help="Legislatura: LXVI."),
+    Diputado: str = typer.Option("", help="IdExterno del diputado para corrida individual."),
+    Backfill: bool = typer.Option(False, help="Recorre TODOS los diputados de LXVI."),
+) -> None:
+    import asyncio
+
+    if Camara != "Diputados":
+        raise typer.BadParameter("--Camara solo Diputados en Fase 5")
+    if Legislatura != "LXVI":
+        raise typer.BadParameter("--Legislatura solo LXVI en Fase 5")
+    if not Diputado and not Backfill:
+        raise typer.BadParameter(
+            "Pasa --Diputado <Id> O --Backfill (no podemos correr sin saber a quien)"
+        )
+    if Diputado and Backfill:
+        raise typer.BadParameter("--Diputado y --Backfill son mutuamente exclusivos")
+
+    from sqlalchemy import select
+
+    from CongresoMx.Database import DisposeEngine, GetSessionMaker
+    from CongresoMx.Models import LegisladorPeriodo, Legislatura as LegMod
+    from CongresoMx.Scrapers.Diputados.Asistencias import ScraperDiputadosAsistencias
+    from CongresoMx.Services.Asistencias import (
+        CargarMapaSesiones,
+        FinalizarScrapingRun,
+        GuardarAsistenciasDiputado,
+        IniciarScrapingRun,
+        ResolverLegisladorPeriodoId,
+        StatsAsistencias,
+    )
+
+    Fuente = f"SITL_{Legislatura}"
+
+    async def Run() -> None:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        SessionMaker = GetSessionMaker()
+
+        async with SessionMaker() as Sess:
+            LegRow = (
+                await Sess.execute(select(LegMod).where(LegMod.Numero == Legislatura))
+            ).scalar_one_or_none()
+            if LegRow is None:
+                raise RuntimeError(f"Legislatura {Legislatura} no esta en DB")
+            LegislaturaId = LegRow.Id
+
+            MapaSesiones = await CargarMapaSesiones(Sess, LegislaturaId)
+            if not MapaSesiones:
+                raise RuntimeError("No hay Sesiones en DB; corre Scrape Sesiones primero")
+
+            if Diputado:
+                IdsExternos = [Diputado]
+            else:
+                Rows = (
+                    await Sess.execute(
+                        select(LegisladorPeriodo.IdExterno).where(
+                            LegisladorPeriodo.LegislaturaId == LegislaturaId,
+                            LegisladorPeriodo.Camara == "Diputados",
+                            LegisladorPeriodo.Fuente == Fuente,
+                        )
+                    )
+                ).all()
+                IdsExternos = [R[0] for R in Rows if R[0]]
+            typer.echo(f"Diputados a procesar: {len(IdsExternos)}")
+
+            Stats = StatsAsistencias()
+            ScrapingRunRow = await IniciarScrapingRun(
+                Sess,
+                Tipo="Asistencias",
+                Parametros={"Legislatura": Legislatura, "Total": len(IdsExternos)},
+            )
+            await Sess.commit()
+            ScrapingRunId = ScrapingRunRow.Id
+
+        async with ScraperDiputadosAsistencias(Legislatura=Legislatura) as Scraper:
+            for Index, IdExterno in enumerate(IdsExternos, start=1):
+                Asistencias = await Scraper.ScrapearDiputado(IdExterno)
+                async with SessionMaker() as Sess2:
+                    LegPerId = await ResolverLegisladorPeriodoId(
+                        Sess2, IdExterno, LegislaturaId, Fuente
+                    )
+                    if LegPerId is None:
+                        Stats.LegPeriodoNoEncontrado += 1
+                        continue
+                    await GuardarAsistenciasDiputado(
+                        Sess2,
+                        LegisladorPeriodoId=LegPerId,
+                        Asistencias=Asistencias,
+                        MapaSesiones=MapaSesiones,
+                        Fuente=Fuente,
+                        Stats=Stats,
+                    )
+                    await Sess2.commit()
+                if Index % 25 == 0 or Index == len(IdsExternos):
+                    logging.getLogger("CongresoMx.Cli").info(
+                        "Progreso: %d/%d diputados (nuevas=%d cambios=%d errores=%d)",
+                        Index, len(IdsExternos), Stats.Nuevas, Stats.Cambios, Stats.Errores,
+                    )
+
+        async with SessionMaker() as Sess3:
+            from CongresoMx.Models import ScrapingRun
+            RunReload = (
+                await Sess3.execute(select(ScrapingRun).where(ScrapingRun.Id == ScrapingRunId))
+            ).scalar_one()
+            FinalStatus = "Success" if Stats.Errores == 0 else "Partial"
+            FinalizarScrapingRun(RunReload, Stats, FinalStatus)
+            await Sess3.commit()
+
+        typer.echo("")
+        typer.echo(f"Asistencias nuevas:           {Stats.Nuevas}")
+        typer.echo(f"Asistencias actualizadas:     {Stats.Actualizadas}")
+        typer.echo(f"Cambios de estado detectados: {Stats.Cambios}")
+        typer.echo(f"Codigos desconocidos:         {Stats.CodigosDesconocidos}")
+        typer.echo(f"Sesion no encontrada:         {Stats.SesionNoEncontrada}")
+        typer.echo(f"LegPeriodo no encontrado:     {Stats.LegPeriodoNoEncontrado}")
+        typer.echo(f"Errores:                      {Stats.Errores}")
+        await DisposeEngine()
+
+    asyncio.run(Run())
+
+
 # Entrypoint para `python -m CongresoMx.Cli` o el script `congresomx`.
 def Main() -> None:
     logging.basicConfig(
