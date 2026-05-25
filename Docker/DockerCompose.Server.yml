@@ -9,7 +9,11 @@
 
 services:
   Mariadb:
-    ports: !reset []
+    # 127.0.0.1:13306 expone Mariadb solo dentro del VPS (loopback).
+    # Para llegar desde el Mac: ssh -L 13306:127.0.0.1:13306 root@VPS.
+    # Puerto 13306 (no 3306) evita chocar con el mysqld del host VPS.
+    ports:
+      - "127.0.0.1:13306:3306"
 
   Redis:
     ports: !reset []
