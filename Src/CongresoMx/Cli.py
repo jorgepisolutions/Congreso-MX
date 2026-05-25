@@ -55,27 +55,24 @@ def Scheduler() -> None:
     RunScheduler()
 
 
-# Scrapea los legisladores de Diputados de una legislatura y los persiste.
-# Limit > 0 para validacion rapida en dev.
+# Scrapea los legisladores de una camara/legislatura y los persiste.
+# Limit > 0 para validacion rapida en dev. Soporta Diputados y Senado.
 @ScrapeApp.command(name="Legisladores")
 def ScrapeLegisladores(
-    Camara: str = typer.Option("Diputados", help="Camara: Diputados (Senado pendiente)."),
+    Camara: str = typer.Option("Diputados", help="Camara: Diputados o Senado."),
     Legislatura: str = typer.Option("LXVI", help="Legislatura: LXVI."),
     Limit: int = typer.Option(0, help="0 = todos; N > 0 = solo los primeros N."),
 ) -> None:
     import asyncio
 
-    if Camara != "Diputados":
-        raise typer.BadParameter(
-            f"--Camara {Camara!r} aun no implementada (solo Diputados en Fase 3)"
-        )
+    if Camara not in ("Diputados", "Senado"):
+        raise typer.BadParameter(f"--Camara {Camara!r} no soportada (Diputados o Senado)")
     if Legislatura != "LXVI":
         raise typer.BadParameter(
-            f"--Legislatura {Legislatura!r} aun no implementada (solo LXVI en Fase 3)"
+            f"--Legislatura {Legislatura!r} aun no implementada (solo LXVI)"
         )
 
     from CongresoMx.Database import DisposeEngine, GetSessionMaker
-    from CongresoMx.Scrapers.Diputados.Legisladores import ScraperDiputadosLegisladores
     from CongresoMx.Services.Legisladores import GuardarBatch
 
     async def Run() -> None:
@@ -83,17 +80,32 @@ def ScrapeLegisladores(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
-        async with ScraperDiputadosLegisladores(Legislatura=Legislatura) as Scraper:
-            Mergeados = await Scraper.ScrapearLegislatura(
-                Limit=Limit if Limit > 0 else None
+        if Camara == "Diputados":
+            from CongresoMx.Scrapers.Diputados.Legisladores import (
+                ScraperDiputadosLegisladores,
             )
+            async with ScraperDiputadosLegisladores(Legislatura=Legislatura) as Scraper:
+                Mergeados = await Scraper.ScrapearLegislatura(
+                    Limit=Limit if Limit > 0 else None
+                )
+        else:
+            from CongresoMx.Scrapers.Senado.Legisladores import (
+                ScraperSenadoLegisladores,
+            )
+            async with ScraperSenadoLegisladores(Legislatura=Legislatura) as Scraper:
+                Mergeados = await Scraper.ScrapearLegislatura(
+                    Limit=Limit if Limit > 0 else None
+                )
 
         SessionMaker = GetSessionMaker()
         async with SessionMaker() as Session:
-            Stats = await GuardarBatch(Session, Mergeados, NumeroLegislatura=Legislatura)
+            Stats = await GuardarBatch(
+                Session, Mergeados, NumeroLegislatura=Legislatura, Camara=Camara
+            )
             await Session.commit()
 
         typer.echo("")
+        typer.echo(f"Camara:                   {Camara}")
         typer.echo(f"Mergeados scrapeados:     {len(Mergeados)}")
         typer.echo(f"Nuevos en DB:             {Stats.Nuevos}")
         typer.echo(f"Actualizados en DB:       {Stats.Actualizados}")

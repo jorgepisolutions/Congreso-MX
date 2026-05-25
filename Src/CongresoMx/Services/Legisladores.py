@@ -20,6 +20,18 @@ from CongresoMx.Utils.Texto import NormalizarParaHash
 Logger = logging.getLogger(__name__)
 
 CAMARA_DIPUTADOS = "Diputados"
+CAMARA_SENADO = "Senado"
+
+# El Senado usa nombres formales largos para algunos estados (ej.
+# "Coahuila de Zaragoza"). Mapeamos a la clave normalizada que esta en
+# el catalogo Estados para no perder el FK.
+ALIAS_ESTADOS_NOMBRE_LARGO: dict[str, str] = {
+    "coahuila de zaragoza": "coahuila",
+    "michoacan de ocampo": "michoacan",
+    "veracruz de ignacio de la llave": "veracruz",
+    "estado de mexico": "mexico",
+    "queretaro de arteaga": "queretaro",
+}
 
 
 # Estadisticas de una corrida de guardado. Util para reportes y para
@@ -48,11 +60,17 @@ async def CargarCatalogos(Session: AsyncSession) -> CatalogoCache:
     PartidoRows = (await Session.execute(select(Partido.Siglas, Partido.Id))).all()
     EstadoRows = (await Session.execute(select(Estado.Nombre, Estado.Id))).all()
     LegRows = (await Session.execute(select(Legislatura.Numero, Legislatura.Id))).all()
+    EstadosMap: dict[str, int] = {
+        NormalizarParaHash(Nombre): Id_ for Nombre, Id_ in EstadoRows
+    }
+    # Agrega aliases largos del Senado apuntando al mismo Id.
+    for Alias, Target in ALIAS_ESTADOS_NOMBRE_LARGO.items():
+        Id_ = EstadosMap.get(Target)
+        if Id_ is not None:
+            EstadosMap[Alias] = Id_
     return CatalogoCache(
         PartidoIdPorSiglas={Siglas: Id_ for Siglas, Id_ in PartidoRows},
-        EstadoIdPorNombreNormalizado={
-            NormalizarParaHash(Nombre): Id_ for Nombre, Id_ in EstadoRows
-        },
+        EstadoIdPorNombreNormalizado=EstadosMap,
         LegislaturaIdPorNumero={Numero: Id_ for Numero, Id_ in LegRows},
     )
 
@@ -94,7 +112,7 @@ async def UpsertLegislador(
 
 
 # Busca un LegisladorPeriodo por (LegislaturaId, Camara, IdExterno, Fuente)
-# y actualiza; si no existe, lo crea. Devuelve (fila, fue_nuevo).
+# y actualiza; si no existe, lo crea. Camara debe ser "Diputados" o "Senado".
 async def UpsertLegisladorPeriodo(
     Session: AsyncSession,
     LegisladorId: int,
@@ -103,12 +121,13 @@ async def UpsertLegisladorPeriodo(
     PartidoId: int | None,
     EstadoId: int | None,
     Fuente: str,
+    Camara: str = CAMARA_DIPUTADOS,
 ) -> tuple[LegisladorPeriodo, bool]:
     Existing = (
         await Session.execute(
             select(LegisladorPeriodo).where(
                 LegisladorPeriodo.LegislaturaId == LegislaturaId,
-                LegisladorPeriodo.Camara == CAMARA_DIPUTADOS,
+                LegisladorPeriodo.Camara == Camara,
                 LegisladorPeriodo.IdExterno == Datos.IdExterno,
                 LegisladorPeriodo.Fuente == Fuente,
             )
@@ -127,7 +146,7 @@ async def UpsertLegisladorPeriodo(
     Nuevo = LegisladorPeriodo(
         LegisladorId=LegisladorId,
         LegislaturaId=LegislaturaId,
-        Camara=CAMARA_DIPUTADOS,
+        Camara=Camara,
         PartidoId=PartidoId,
         EstadoId=EstadoId,
         Distrito=Datos.Distrito,
@@ -176,11 +195,12 @@ def FinalizarScrapingRun(
 
 # Procesa la lista completa de LegisladorMergeado: resuelve catalogos,
 # upsert Legislador, upsert LegisladorPeriodo, audita en ScrapingRuns.
-# El caller hace commit cuando regresa.
+# Camara: "Diputados" o "Senado". El caller hace commit cuando regresa.
 async def GuardarBatch(
     Session: AsyncSession,
     Mergeados: list[LegisladorMergeado],
     NumeroLegislatura: str,
+    Camara: str = CAMARA_DIPUTADOS,
 ) -> StatsGuardado:
     Cache = await CargarCatalogos(Session)
     LegislaturaId = Cache.LegislaturaIdPorNumero.get(NumeroLegislatura)
@@ -190,12 +210,12 @@ async def GuardarBatch(
             "Corre Scripts/SeedCatalogos.py primero."
         )
 
-    Fuente = f"SITL_{NumeroLegislatura}"
+    Fuente = f"SITL_{NumeroLegislatura}" if Camara == CAMARA_DIPUTADOS else f"SENADO_{NumeroLegislatura}"
     Stats = StatsGuardado()
     Run = await IniciarScrapingRun(
         Session,
         Tipo="Legisladores",
-        Parametros={"Legislatura": NumeroLegislatura, "Total": len(Mergeados)},
+        Parametros={"Legislatura": NumeroLegislatura, "Camara": Camara, "Total": len(Mergeados)},
     )
 
     try:
@@ -231,6 +251,7 @@ async def GuardarBatch(
                     PartidoId=PartidoId,
                     EstadoId=EstadoId,
                     Fuente=Fuente,
+                    Camara=Camara,
                 )
             except Exception as Exc:
                 Logger.error(
