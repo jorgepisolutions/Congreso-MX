@@ -1,6 +1,14 @@
 from datetime import date
 
-from sqlalchemy import Boolean, Date, Enum, ForeignKey, SmallInteger, String
+from sqlalchemy import (
+    Boolean,
+    Date,
+    Enum,
+    ForeignKey,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from CongresoMx.Models.Base import DEFAULT_TABLE_KWARGS, Base
@@ -22,7 +30,16 @@ class Legislatura(Base):
 # ordinarios + extraordinarios eventuales.
 class Periodo(Base):
     __tablename__ = "Periodos"
-    __table_args__ = DEFAULT_TABLE_KWARGS
+    __table_args__ = (
+        UniqueConstraint(
+            "LegislaturaId",
+            "AnioLegislativo",
+            "Numero",
+            "Tipo",
+            name="UkPeriodosLegislaturaAnioNumeroTipo",
+        ),
+        DEFAULT_TABLE_KWARGS,
+    )
 
     Id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     LegislaturaId: Mapped[int] = mapped_column(
@@ -31,7 +48,7 @@ class Periodo(Base):
     AnioLegislativo: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     Numero: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     Tipo: Mapped[str] = mapped_column(
-        Enum("Ordinario", "Extraordinario", name="PeriodoTipoEnum"),
+        Enum("Ordinario", "Extraordinario", "Permanente", name="PeriodoTipoEnum"),
         nullable=False,
     )
     FechaInicio: Mapped[date] = mapped_column(Date, nullable=False)

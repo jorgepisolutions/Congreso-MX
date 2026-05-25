@@ -117,44 +117,52 @@ def ScrapeLegisladores(
     asyncio.run(Run())
 
 
-# Scrapea el calendario de sesiones de Diputados via SITL.
-# Una corrida cubre todos los perts conocidos (~10 seg).
+# Scrapea el calendario de sesiones de una camara. Diputados via SITL
+# (7 perts ~10 seg); Senado via /66/sesiones (1 request ~3 seg).
 @ScrapeApp.command(name="Sesiones")
 def ScrapeSesiones(
-    Camara: str = typer.Option("Diputados", help="Camara: Diputados (Senado pendiente)."),
+    Camara: str = typer.Option("Diputados", help="Camara: Diputados o Senado."),
     Legislatura: str = typer.Option("LXVI", help="Legislatura: LXVI."),
 ) -> None:
     import asyncio
 
-    if Camara != "Diputados":
-        raise typer.BadParameter(
-            f"--Camara {Camara!r} aun no implementada (solo Diputados en Fase 4)"
-        )
+    if Camara not in ("Diputados", "Senado"):
+        raise typer.BadParameter(f"--Camara {Camara!r} no soportada")
     if Legislatura != "LXVI":
-        raise typer.BadParameter(
-            f"--Legislatura {Legislatura!r} aun no implementada (solo LXVI en Fase 4)"
-        )
+        raise typer.BadParameter(f"--Legislatura {Legislatura!r} aun no implementada")
 
     from CongresoMx.Database import DisposeEngine, GetSessionMaker
-    from CongresoMx.Scrapers.Diputados.Sesiones import ScraperDiputadosSesiones
-    from CongresoMx.Services.Sesiones import GuardarBatchSesiones
 
     async def Run() -> None:
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
-        async with ScraperDiputadosSesiones(Legislatura=Legislatura) as Scraper:
-            Sesiones = await Scraper.ScrapearCalendarioCompleto()
-
-        SessionMaker = GetSessionMaker()
-        async with SessionMaker() as Session:
-            Stats = await GuardarBatchSesiones(
-                Session, Sesiones, NumeroLegislatura=Legislatura
-            )
-            await Session.commit()
+        if Camara == "Diputados":
+            from CongresoMx.Scrapers.Diputados.Sesiones import ScraperDiputadosSesiones
+            from CongresoMx.Services.Sesiones import GuardarBatchSesiones
+            async with ScraperDiputadosSesiones(Legislatura=Legislatura) as Scraper:
+                Sesiones = await Scraper.ScrapearCalendarioCompleto()
+            SessionMaker = GetSessionMaker()
+            async with SessionMaker() as Session:
+                Stats = await GuardarBatchSesiones(
+                    Session, Sesiones, NumeroLegislatura=Legislatura
+                )
+                await Session.commit()
+        else:
+            from CongresoMx.Scrapers.Senado.Sesiones import ScraperSenadoSesiones
+            from CongresoMx.Services.Sesiones import GuardarBatchSesionesSenado
+            async with ScraperSenadoSesiones(Legislatura=Legislatura) as Scraper:
+                Sesiones = await Scraper.ScrapearSesiones()
+            SessionMaker = GetSessionMaker()
+            async with SessionMaker() as Session:
+                Stats = await GuardarBatchSesionesSenado(
+                    Session, Sesiones, NumeroLegislatura=Legislatura
+                )
+                await Session.commit()
 
         typer.echo("")
+        typer.echo(f"Camara:                   {Camara}")
         typer.echo(f"Sesiones detectadas:      {len(Sesiones)}")
         typer.echo(f"Nuevas en DB:             {Stats.Nuevas}")
         typer.echo(f"Actualizadas en DB:       {Stats.Actualizadas}")

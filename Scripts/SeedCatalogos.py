@@ -22,12 +22,16 @@ LEGISLATURAS: list[tuple[str, int, date, date]] = [
 # Tupla: (LegislaturaNumero, AnioLegislativo, NumeroPeriodo, Tipo, FechaInicio, FechaFin).
 PERIODOS: list[tuple[str, int, int, str, date, date]] = [
     ("LXVI", 1, 1, "Ordinario",     date(2024, 9, 1),  date(2024, 12, 15)),
+    ("LXVI", 1, 1, "Permanente",    date(2024, 12, 16),date(2025, 1, 31)),
     ("LXVI", 1, 2, "Ordinario",     date(2025, 2, 1),  date(2025, 4, 30)),
     ("LXVI", 1, 1, "Extraordinario",date(2025, 5, 1),  date(2025, 7, 31)),
     ("LXVI", 1, 2, "Extraordinario",date(2025, 6, 1),  date(2025, 7, 31)),
+    ("LXVI", 1, 2, "Permanente",    date(2025, 5, 1),  date(2025, 8, 31)),
     ("LXVI", 2, 1, "Ordinario",     date(2025, 9, 1),  date(2025, 12, 15)),
+    ("LXVI", 2, 1, "Permanente",    date(2025, 12, 16),date(2026, 1, 31)),
     ("LXVI", 2, 2, "Ordinario",     date(2026, 2, 1),  date(2026, 4, 30)),
     ("LXVI", 2, 1, "Extraordinario",date(2026, 5, 1),  date(2026, 7, 31)),
+    ("LXVI", 2, 2, "Permanente",    date(2026, 5, 1),  date(2026, 8, 31)),
 ]
 
 # Estados de Mexico con clave numerica del INE (1-32) y abreviatura comun.
