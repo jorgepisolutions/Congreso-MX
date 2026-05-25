@@ -14,7 +14,7 @@ Logger = logging.getLogger(__name__)
 
 
 # Comando de smoke test: imprime saludo y carga la config para validar wiring.
-@App.command()
+@App.command(name="Hello")
 def Hello(Name: str = typer.Option("Mundo", help="Nombre a saludar.")) -> None:
     Config = GetSettings()
     typer.echo(f"Hola, {Name}.")
