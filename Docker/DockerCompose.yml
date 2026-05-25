@@ -1,0 +1,54 @@
+services:
+  Mariadb:
+    image: mariadb:11
+    container_name: CongresoMxMariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MariadbRootPassword:-ChangeMeRootPass}
+      MARIADB_DATABASE: ${MariadbDatabase:-CongresoMx}
+      MARIADB_USER: ${MariadbUser:-CongresoMx}
+      MARIADB_PASSWORD: ${MariadbPassword:-CongresoMxPass}
+      MARIADB_CHARACTER_SET_SERVER: utf8mb4
+      MARIADB_COLLATION_SERVER: utf8mb4_unicode_ci
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+    ports:
+      - "3306:3306"
+    volumes:
+      - MariadbData:/var/lib/mysql
+      - ./MariadbInit:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - CongresoMxNet
+
+  Redis:
+    image: redis:7-alpine
+    container_name: CongresoMxRedis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - RedisData:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - CongresoMxNet
+
+volumes:
+  MariadbData:
+  RedisData:
+
+networks:
+  CongresoMxNet:
+    driver: bridge

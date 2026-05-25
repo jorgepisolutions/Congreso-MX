@@ -1,0 +1,70 @@
+[project]
+name = "congresomx"
+version = "0.1.0"
+description = "ETL del Congreso de la Union de Mexico"
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [
+    { name = "Jorge Pi", email = "jorge.pi@elipgo.com" }
+]
+
+dependencies = [
+    "httpx>=0.27",
+    "selectolax>=0.3.21",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "asyncmy>=0.2.9",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "apscheduler>=3.10",
+    "redis>=5.0",
+    "typer>=0.12",
+    "python-dotenv>=1.0",
+    "tenacity>=8.2",
+    "pydantic-settings>=2.2",
+]
+
+[project.scripts]
+congresomx = "CongresoMx.Cli:Main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "ipython>=8.0",
+    "pre-commit>=3.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["Src/CongresoMx"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["Tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+mypy_path = "Src"
+explicit_package_bases = true
+packages = ["CongresoMx"]
+
+[[tool.mypy.overrides]]
+module = ["asyncmy.*", "apscheduler.*", "selectolax.*"]
+ignore_missing_imports = true

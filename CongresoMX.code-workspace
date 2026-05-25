@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"gitlab.ignoreCertificateErrors": true,
+		"gitlab.ca": "C:\\Users\\jorge\\fullchain.pem"
+	}
+}
