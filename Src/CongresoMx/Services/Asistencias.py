@@ -19,8 +19,9 @@ from CongresoMx.Scrapers.Diputados.Sesiones import SCRAPER_FUENTE
 Logger = logging.getLogger(__name__)
 
 CAMARA_DIPUTADOS = "Diputados"
+CAMARA_SENADO = "Senado"
 
-# Mapeo de codigos del SITL a Asistencia.Estado.
+# Mapeo de codigos del SITL Diputados a Asistencia.Estado.
 # Codigos: A (sistema), AC (cedula), AO (comision oficial), PM (permiso mesa),
 # IJ (inasistencia justificada), I (inasistencia), IV (inasistencia votaciones).
 CODIGO_A_ESTADO: dict[str, str] = {
@@ -32,6 +33,30 @@ CODIGO_A_ESTADO: dict[str, str] = {
     "I":  "Ausente",
     "IV": "Ausente",
 }
+
+# Mapeo de la columna "Registro" del Senado a Asistencia.Estado.
+# Senado usa textos descriptivos en mayusculas, no codigos cortos.
+REGISTRO_SENADO_A_ESTADO: dict[str, str] = {
+    "asistencia": "Presente",
+    "ausente": "Ausente",
+    "ausencia": "Ausente",
+    "inasistencia": "Ausente",
+    "inasistencia justificada": "Justificado",
+    "justificacion": "Justificado",
+    "comision oficial": "ComisionOficial",
+    "licencia": "Licencia",
+}
+
+
+# Mapea el texto de la columna Registro del Senado a Asistencia.Estado.
+# Devuelve (Estado, EsDesconocido). Normaliza sin acentos antes de mapear.
+def MapearRegistroSenadoAEstado(Registro: str) -> tuple[str, bool]:
+    from CongresoMx.Utils.Texto import NormalizarParaHash
+    Key = NormalizarParaHash(Registro)
+    Estado = REGISTRO_SENADO_A_ESTADO.get(Key)
+    if Estado is None:
+        return "Desconocido", True
+    return Estado, False
 
 
 # Estadisticas de upsert para reporting + ScrapingRun.
@@ -127,34 +152,71 @@ def FinalizarScrapingRun(
 
 # Carga (Camara, LegislaturaId, Fecha) -> SesionId desde DB en un solo SELECT.
 async def CargarMapaSesiones(
-    Session: AsyncSession, LegislaturaId: int
+    Session: AsyncSession, LegislaturaId: int, Camara: str = CAMARA_DIPUTADOS
 ) -> dict[date, int]:
     Rows = (
         await Session.execute(
             select(Sesion.Fecha, Sesion.Id).where(
                 Sesion.LegislaturaId == LegislaturaId,
-                Sesion.Camara == CAMARA_DIPUTADOS,
+                Sesion.Camara == Camara,
             )
         )
     ).all()
     return {Fecha: Id_ for Fecha, Id_ in Rows}
 
 
+# Carga mapa (Fecha, NumeroSesion) -> SesionId para Senado, donde una
+# fecha puede tener varias sesiones (matutina + vespertina).
+async def CargarMapaSesionesSenado(
+    Session: AsyncSession, LegislaturaId: int
+) -> dict[tuple[date, str], int]:
+    Rows = (
+        await Session.execute(
+            select(Sesion.Fecha, Sesion.Numero, Sesion.Id).where(
+                Sesion.LegislaturaId == LegislaturaId,
+                Sesion.Camara == CAMARA_SENADO,
+            )
+        )
+    ).all()
+    return {(Fecha, str(Numero)): Id_ for Fecha, Numero, Id_ in Rows if Numero}
+
+
 # Resuelve LegisladorPeriodoId desde IdExterno + Fuente.
 async def ResolverLegisladorPeriodoId(
-    Session: AsyncSession, IdExterno: str, LegislaturaId: int, FuenteLeg: str
+    Session: AsyncSession,
+    IdExterno: str,
+    LegislaturaId: int,
+    FuenteLeg: str,
+    Camara: str = CAMARA_DIPUTADOS,
 ) -> int | None:
     Row = (
         await Session.execute(
             select(LegisladorPeriodo.Id).where(
                 LegisladorPeriodo.IdExterno == IdExterno,
                 LegisladorPeriodo.LegislaturaId == LegislaturaId,
-                LegisladorPeriodo.Camara == CAMARA_DIPUTADOS,
+                LegisladorPeriodo.Camara == Camara,
                 LegisladorPeriodo.Fuente == FuenteLeg,
             )
         )
     ).scalar_one_or_none()
     return Row
+
+
+# Carga TODOS los LegisladorPeriodoId de Senado de la legislatura en
+# un dict IdExterno -> Id, evitando 128 SELECTs (1 por senador) por sesion.
+async def CargarMapaLegisladorPeriodoSenado(
+    Session: AsyncSession, LegislaturaId: int, Fuente: str
+) -> dict[str, int]:
+    Rows = (
+        await Session.execute(
+            select(LegisladorPeriodo.IdExterno, LegisladorPeriodo.Id).where(
+                LegisladorPeriodo.LegislaturaId == LegislaturaId,
+                LegisladorPeriodo.Camara == CAMARA_SENADO,
+                LegisladorPeriodo.Fuente == Fuente,
+            )
+        )
+    ).all()
+    return {IdExterno: Id_ for IdExterno, Id_ in Rows if IdExterno}
 
 
 # Procesa las asistencias crudas de UN diputado. Inserta o actualiza
@@ -239,3 +301,53 @@ async def GuardarAsistenciasDiputado(
                 Stats.Actualizadas += 1
             if Cambio:
                 Stats.Cambios += 1
+
+
+# Procesa todas las asistencias de UNA sesion del Senado.
+# Una sola fila por (Sesion, Senador) con TipoPaseLista=NULL.
+async def GuardarAsistenciasSesionSenado(
+    Session: AsyncSession,
+    SesionId: int,
+    AsistenciasCrudas: list,
+    MapaLegisladorPeriodo: dict[str, int],
+    Fuente: str,
+    Stats: StatsAsistencias,
+) -> None:
+    for ACruda in AsistenciasCrudas:
+        LegPerId = MapaLegisladorPeriodo.get(ACruda.IdSenadorExterno)
+        if LegPerId is None:
+            Logger.warning(
+                "Senador IdExterno=%s no esta en DB; skip asistencia sesion=%d",
+                ACruda.IdSenadorExterno, SesionId,
+            )
+            Stats.LegPeriodoNoEncontrado += 1
+            continue
+        Estado, Desconocido = MapearRegistroSenadoAEstado(ACruda.RegistroCrudo)
+        if Desconocido:
+            Logger.warning(
+                "Registro Senado no mapeado: %r (senador %s, sesion %d)",
+                ACruda.RegistroCrudo, ACruda.IdSenadorExterno, SesionId,
+            )
+            Stats.CodigosDesconocidos += 1
+        try:
+            _, EsNueva, Cambio = await UpsertAsistencia(
+                Session,
+                SesionId=SesionId,
+                LegisladorPeriodoId=LegPerId,
+                Estado=Estado,
+                TipoPaseLista=None,
+                Fuente=Fuente,
+            )
+        except Exception as Exc:
+            Logger.error(
+                "Error upsert asistencia Senado sesion=%d senador=%s: %s",
+                SesionId, ACruda.IdSenadorExterno, Exc,
+            )
+            Stats.Errores += 1
+            continue
+        if EsNueva:
+            Stats.Nuevas += 1
+        else:
+            Stats.Actualizadas += 1
+        if Cambio:
+            Stats.Cambios += 1
