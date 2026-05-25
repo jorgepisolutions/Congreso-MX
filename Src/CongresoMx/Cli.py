@@ -105,6 +105,54 @@ def ScrapeLegisladores(
     asyncio.run(Run())
 
 
+# Scrapea el calendario de sesiones de Diputados via SITL.
+# Una corrida cubre todos los perts conocidos (~10 seg).
+@ScrapeApp.command(name="Sesiones")
+def ScrapeSesiones(
+    Camara: str = typer.Option("Diputados", help="Camara: Diputados (Senado pendiente)."),
+    Legislatura: str = typer.Option("LXVI", help="Legislatura: LXVI."),
+) -> None:
+    import asyncio
+
+    if Camara != "Diputados":
+        raise typer.BadParameter(
+            f"--Camara {Camara!r} aun no implementada (solo Diputados en Fase 4)"
+        )
+    if Legislatura != "LXVI":
+        raise typer.BadParameter(
+            f"--Legislatura {Legislatura!r} aun no implementada (solo LXVI en Fase 4)"
+        )
+
+    from CongresoMx.Database import DisposeEngine, GetSessionMaker
+    from CongresoMx.Scrapers.Diputados.Sesiones import ScraperDiputadosSesiones
+    from CongresoMx.Services.Sesiones import GuardarBatchSesiones
+
+    async def Run() -> None:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        async with ScraperDiputadosSesiones(Legislatura=Legislatura) as Scraper:
+            Sesiones = await Scraper.ScrapearCalendarioCompleto()
+
+        SessionMaker = GetSessionMaker()
+        async with SessionMaker() as Session:
+            Stats = await GuardarBatchSesiones(
+                Session, Sesiones, NumeroLegislatura=Legislatura
+            )
+            await Session.commit()
+
+        typer.echo("")
+        typer.echo(f"Sesiones detectadas:      {len(Sesiones)}")
+        typer.echo(f"Nuevas en DB:             {Stats.Nuevas}")
+        typer.echo(f"Actualizadas en DB:       {Stats.Actualizadas}")
+        typer.echo(f"Sin periodo:              {Stats.SinPeriodo}")
+        typer.echo(f"Errores:                  {Stats.Errores}")
+        await DisposeEngine()
+
+    asyncio.run(Run())
+
+
 # Entrypoint para `python -m CongresoMx.Cli` o el script `congresomx`.
 def Main() -> None:
     logging.basicConfig(
