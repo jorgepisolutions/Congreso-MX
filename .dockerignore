@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Virtual environments
+.venv
+venv
+env
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Test / lint caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+Logs
+
+# Project specific
+.env
+.env.local
+.env.*.local
+Recon/Output
+Backups
+
+# Tests no entran en build
+Tests
+
+# uv cache
+.uv-cache
+
+# Documentacion
+docs
+*.md
+!README.md
+
+# Scripts dev-only
+Scripts

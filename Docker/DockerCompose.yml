@@ -45,6 +45,58 @@ services:
     networks:
       - CongresoMxNet
 
+  AppApi:
+    build:
+      context: ..
+      dockerfile: Docker/AppDockerfile
+    image: congresomx-app:latest
+    container_name: CongresoMxAppApi
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      TZ: UTC
+    command: ["uvicorn", "CongresoMx.Api.Main:App", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      Mariadb:
+        condition: service_healthy
+      Redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - CongresoMxNet
+
+  AppScheduler:
+    build:
+      context: ..
+      dockerfile: Docker/AppDockerfile
+    image: congresomx-app:latest
+    container_name: CongresoMxAppScheduler
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      TZ: UTC
+    command: ["congresomx", "Scheduler"]
+    depends_on:
+      Mariadb:
+        condition: service_healthy
+      Redis:
+        condition: service_healthy
+    networks:
+      - CongresoMxNet
+
 volumes:
   MariadbData:
   RedisData:

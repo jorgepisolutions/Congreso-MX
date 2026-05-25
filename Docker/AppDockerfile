@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.7
+# Multi-stage build con uv. Stage builder instala deps y proyecto.
+# Stage runtime es minimo, sin uv ni toolchain, usuario no-root.
+
+ARG PYTHON_VERSION=3.11
+
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.4 /uv /uvx /bin/
+
+WORKDIR /app
+
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never
+
+# Instala dependencias primero (sin el proyecto) para que la capa
+# se invalide solo cuando cambien pyproject.toml o uv.lock.
+COPY pyproject.toml README.md ./
+RUN uv sync --no-install-project --no-dev
+
+# Copia el codigo del proyecto e instala el paquete CongresoMx en el venv.
+COPY Src ./Src
+RUN uv sync --no-dev
+
+
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+# Usuario sin privilegios para correr la app.
+RUN groupadd -r congresomx && \
+    useradd -r -g congresomx -d /app -s /sbin/nologin congresomx && \
+    mkdir -p /app && chown congresomx:congresomx /app
+
+WORKDIR /app
+
+COPY --from=builder --chown=congresomx:congresomx /app /app
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER congresomx
+
+EXPOSE 8000
+
+# Default: API en 8000. El scheduler usa otro command en compose.
+CMD ["uvicorn", "CongresoMx.Api.Main:App", "--host", "0.0.0.0", "--port", "8000"]

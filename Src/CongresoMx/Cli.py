@@ -21,6 +21,33 @@ def Hello(Name: str = typer.Option("Mundo", help="Nombre a saludar.")) -> None:
     typer.echo(f"EnvName={Config.EnvName} LogLevel={Config.LogLevel}")
 
 
+# Levanta uvicorn apuntando a CongresoMx.Api.Main:App.
+# Toma host y puerto del .env si no se pasan flags.
+@App.command(name="Serve")
+def Serve(
+    Host: str = typer.Option("", help="Host. Vacio = lee ApiHost del .env."),
+    Port: int = typer.Option(0, help="Puerto. 0 = lee ApiPort del .env."),
+    Reload: bool = typer.Option(False, help="Auto-reload en cambios (solo dev)."),
+) -> None:
+    import uvicorn
+
+    Config = GetSettings()
+    uvicorn.run(
+        "CongresoMx.Api.Main:App",
+        host=Host or Config.ApiHost,
+        port=Port or Config.ApiPort,
+        reload=Reload,
+    )
+
+
+# Corre el scheduler en foreground. Bloquea hasta SIGINT/SIGTERM.
+@App.command(name="Scheduler")
+def Scheduler() -> None:
+    from CongresoMx.Scheduler.Main import Main as RunScheduler
+
+    RunScheduler()
+
+
 # Entrypoint para `python -m CongresoMx.Cli` o el script `congresomx`.
 def Main() -> None:
     logging.basicConfig(
