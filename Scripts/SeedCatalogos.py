@@ -1,13 +1,21 @@
 import asyncio
 import logging
+from datetime import date
 
 from sqlalchemy.dialects.mysql import insert as MysqlInsert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from CongresoMx.Database import DisposeEngine, GetSessionMaker
-from CongresoMx.Models import Estado, Partido
+from CongresoMx.Models import Estado, Legislatura, Partido
 
 Logger = logging.getLogger(__name__)
+
+# Legislaturas vigentes que cubre el proyecto. LXV concluyo en agosto 2024.
+# LXVI esta en curso al momento del seed.
+LEGISLATURAS: list[tuple[str, int, date, date]] = [
+    ("LXV", 65, date(2021, 9, 1), date(2024, 8, 31)),
+    ("LXVI", 66, date(2024, 9, 1), date(2027, 8, 31)),
+]
 
 # Estados de Mexico con clave numerica del INE (1-32) y abreviatura comun.
 # Lista canonica usada por el INE para distritos y resultados electorales.
@@ -59,6 +67,24 @@ PARTIDOS: list[tuple[str, str, str]] = [
 ]
 
 
+# Inserta o actualiza las legislaturas vigentes. Match por Numero (unique).
+async def UpsertLegislaturas(Session: AsyncSession) -> int:
+    for Numero, NumeroArabigo, FechaInicio, FechaFin in LEGISLATURAS:
+        Stmt = MysqlInsert(Legislatura).values(
+            Numero=Numero,
+            NumeroArabigo=NumeroArabigo,
+            FechaInicio=FechaInicio,
+            FechaFin=FechaFin,
+        )
+        Stmt = Stmt.on_duplicate_key_update(
+            NumeroArabigo=Stmt.inserted.NumeroArabigo,
+            FechaInicio=Stmt.inserted.FechaInicio,
+            FechaFin=Stmt.inserted.FechaFin,
+        )
+        await Session.execute(Stmt)
+    return len(LEGISLATURAS)
+
+
 # Inserta o actualiza los 32 estados via ON DUPLICATE KEY UPDATE.
 # Idempotente: re-correr no duplica, solo refresca nombres si cambiaron.
 async def UpsertEstados(Session: AsyncSession) -> int:
@@ -100,10 +126,14 @@ async def Run() -> None:
     SessionMaker = GetSessionMaker()
     try:
         async with SessionMaker() as Session:
+            NumLegislaturas = await UpsertLegislaturas(Session)
             NumEstados = await UpsertEstados(Session)
             NumPartidos = await UpsertPartidos(Session)
             await Session.commit()
-        Logger.info("Seed completo: %d Estados, %d Partidos", NumEstados, NumPartidos)
+        Logger.info(
+            "Seed completo: %d Legislaturas, %d Estados, %d Partidos",
+            NumLegislaturas, NumEstados, NumPartidos,
+        )
     finally:
         await DisposeEngine()
 

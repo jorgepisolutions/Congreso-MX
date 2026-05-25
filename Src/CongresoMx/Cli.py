@@ -10,6 +10,13 @@ App = typer.Typer(
     no_args_is_help=True,
 )
 
+ScrapeApp = typer.Typer(
+    name="Scrape",
+    help="Comandos de scraping de portales del Congreso.",
+    no_args_is_help=True,
+)
+App.add_typer(ScrapeApp, name="Scrape")
+
 Logger = logging.getLogger(__name__)
 
 
@@ -46,6 +53,56 @@ def Scheduler() -> None:
     from CongresoMx.Scheduler.Main import Main as RunScheduler
 
     RunScheduler()
+
+
+# Scrapea los legisladores de Diputados de una legislatura y los persiste.
+# Limit > 0 para validacion rapida en dev.
+@ScrapeApp.command(name="Legisladores")
+def ScrapeLegisladores(
+    Camara: str = typer.Option("Diputados", help="Camara: Diputados (Senado pendiente)."),
+    Legislatura: str = typer.Option("LXVI", help="Legislatura: LXVI."),
+    Limit: int = typer.Option(0, help="0 = todos; N > 0 = solo los primeros N."),
+) -> None:
+    import asyncio
+
+    if Camara != "Diputados":
+        raise typer.BadParameter(
+            f"--Camara {Camara!r} aun no implementada (solo Diputados en Fase 3)"
+        )
+    if Legislatura != "LXVI":
+        raise typer.BadParameter(
+            f"--Legislatura {Legislatura!r} aun no implementada (solo LXVI en Fase 3)"
+        )
+
+    from CongresoMx.Database import DisposeEngine, GetSessionMaker
+    from CongresoMx.Scrapers.Diputados.Legisladores import ScraperDiputadosLegisladores
+    from CongresoMx.Services.Legisladores import GuardarBatch
+
+    async def Run() -> None:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        async with ScraperDiputadosLegisladores(Legislatura=Legislatura) as Scraper:
+            Mergeados = await Scraper.ScrapearLegislatura(
+                Limit=Limit if Limit > 0 else None
+            )
+
+        SessionMaker = GetSessionMaker()
+        async with SessionMaker() as Session:
+            Stats = await GuardarBatch(Session, Mergeados, NumeroLegislatura=Legislatura)
+            await Session.commit()
+
+        typer.echo("")
+        typer.echo(f"Mergeados scrapeados:     {len(Mergeados)}")
+        typer.echo(f"Nuevos en DB:             {Stats.Nuevos}")
+        typer.echo(f"Actualizados en DB:       {Stats.Actualizados}")
+        typer.echo(f"Sin partido resuelto:     {Stats.SinPartido}")
+        typer.echo(f"Sin estado resuelto:      {Stats.SinEstado}")
+        typer.echo(f"Errores de upsert:        {Stats.Errores}")
+        await DisposeEngine()
+
+    asyncio.run(Run())
 
 
 # Entrypoint para `python -m CongresoMx.Cli` o el script `congresomx`.
