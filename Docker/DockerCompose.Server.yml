@@ -1,0 +1,15 @@
+# Override para deploy en server. No expone Mariadb ni Redis al host
+# (la comunicacion entre containers va por la red CongresoMxNet).
+# Solo AppApi queda accesible en el puerto 8000 del host.
+#
+# Uso:
+#   docker compose -f Docker/DockerCompose.yml \
+#                  -f Docker/DockerCompose.Server.yml \
+#                  up -d --build
+
+services:
+  Mariadb:
+    ports: !reset []
+
+  Redis:
+    ports: !reset []
