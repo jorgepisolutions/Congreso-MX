@@ -418,6 +418,396 @@ def ScrapeAsistencias(
     asyncio.run(Run())
 
 
+# Helper: corre seed catalogos. Reusa Scripts/SeedCatalogos.Run() (async).
+# Scripts/ no esta en el paquete instalado; lo agregamos a sys.path al vuelo.
+async def _BackfillSeed() -> dict:
+    import sys
+    from pathlib import Path
+    ProjectRoot = Path(__file__).resolve().parents[2]
+    if str(ProjectRoot) not in sys.path:
+        sys.path.insert(0, str(ProjectRoot))
+    from Scripts.SeedCatalogos import Run as SeedRun
+    await SeedRun()
+    return {"status": "OK"}
+
+
+# Helper: corre el scrape de Legisladores para una camara.
+async def _BackfillLegisladores(Camara: str, Legislatura: str) -> dict:
+    from CongresoMx.Database import GetSessionMaker
+    from CongresoMx.Services.Legisladores import GuardarBatch
+
+    if Camara == "Diputados":
+        from CongresoMx.Scrapers.Diputados.Legisladores import (
+            ScraperDiputadosLegisladores,
+        )
+        async with ScraperDiputadosLegisladores(Legislatura=Legislatura) as Scraper:
+            Mergeados = await Scraper.ScrapearLegislatura(Limit=None)
+    else:
+        from CongresoMx.Scrapers.Senado.Legisladores import ScraperSenadoLegisladores
+        async with ScraperSenadoLegisladores(Legislatura=Legislatura) as Scraper:
+            Mergeados = await Scraper.ScrapearLegislatura(Limit=None)
+
+    SM = GetSessionMaker()
+    async with SM() as Sess:
+        Stats = await GuardarBatch(
+            Sess, Mergeados, NumeroLegislatura=Legislatura, Camara=Camara
+        )
+        await Sess.commit()
+    return {
+        "Total": len(Mergeados),
+        "Nuevos": Stats.Nuevos,
+        "Actualizados": Stats.Actualizados,
+        "Errores": Stats.Errores,
+    }
+
+
+# Helper: corre el scrape de Sesiones para una camara.
+async def _BackfillSesiones(Camara: str, Legislatura: str) -> dict:
+    from CongresoMx.Database import GetSessionMaker
+
+    SM = GetSessionMaker()
+    if Camara == "Diputados":
+        from CongresoMx.Scrapers.Diputados.Sesiones import ScraperDiputadosSesiones
+        from CongresoMx.Services.Sesiones import GuardarBatchSesiones
+        async with ScraperDiputadosSesiones(Legislatura=Legislatura) as Scraper:
+            Sesiones = await Scraper.ScrapearCalendarioCompleto()
+        async with SM() as Sess:
+            Stats = await GuardarBatchSesiones(
+                Sess, Sesiones, NumeroLegislatura=Legislatura
+            )
+            await Sess.commit()
+    else:
+        from CongresoMx.Scrapers.Senado.Sesiones import ScraperSenadoSesiones
+        from CongresoMx.Services.Sesiones import GuardarBatchSesionesSenado
+        async with ScraperSenadoSesiones(Legislatura=Legislatura) as Scraper:
+            Sesiones = await Scraper.ScrapearSesiones()
+        async with SM() as Sess:
+            Stats = await GuardarBatchSesionesSenado(
+                Sess, Sesiones, NumeroLegislatura=Legislatura
+            )
+            await Sess.commit()
+    return {
+        "Total": len(Sesiones),
+        "Nuevas": Stats.Nuevas,
+        "Actualizadas": Stats.Actualizadas,
+        "Errores": Stats.Errores,
+    }
+
+
+# Helper: corre el backfill de Asistencias para una camara.
+# Internamente reusa la logica RunDiputados/RunSenado del comando Scrape.
+async def _BackfillAsistencias(Camara: str, Legislatura: str) -> dict:
+    from sqlalchemy import select
+
+    from CongresoMx.Database import GetSessionMaker
+    from CongresoMx.Models import Legislatura as LegMod
+
+    SM = GetSessionMaker()
+    async with SM() as Sess0:
+        LegRow = (
+            await Sess0.execute(select(LegMod).where(LegMod.Numero == Legislatura))
+        ).scalar_one_or_none()
+        if LegRow is None:
+            raise RuntimeError(f"Legislatura {Legislatura} no esta en DB")
+        LegislaturaId = LegRow.Id
+
+    # Reutilizamos las closures del comando ScrapeAsistencias via importacion
+    # del estado: en esta version delegamos a subprocess via congresomx CLI.
+    # Mas simple: replicamos la logica minima aqui sin closures.
+    Fuente = (
+        f"SITL_{Legislatura}" if Camara == "Diputados" else f"SENADO_{Legislatura}"
+    )
+    from CongresoMx.Services.Asistencias import (
+        FinalizarScrapingRun,
+        IniciarScrapingRun,
+        StatsAsistencias,
+    )
+
+    if Camara == "Diputados":
+        from CongresoMx.Models import LegisladorPeriodo, ScrapingRun
+        from CongresoMx.Scrapers.Diputados.Asistencias import (
+            ScraperDiputadosAsistencias,
+        )
+        from CongresoMx.Services.Asistencias import (
+            CargarMapaSesiones,
+            GuardarAsistenciasDiputado,
+            ResolverLegisladorPeriodoId,
+        )
+
+        async with SM() as Sess:
+            MapaSesiones = await CargarMapaSesiones(Sess, LegislaturaId)
+            Rows = (
+                await Sess.execute(
+                    select(LegisladorPeriodo.IdExterno).where(
+                        LegisladorPeriodo.LegislaturaId == LegislaturaId,
+                        LegisladorPeriodo.Camara == "Diputados",
+                        LegisladorPeriodo.Fuente == Fuente,
+                    )
+                )
+            ).all()
+            IdsExternos = [R[0] for R in Rows if R[0]]
+            Stats = StatsAsistencias()
+            Run = await IniciarScrapingRun(
+                Sess, Tipo="Asistencias",
+                Parametros={"Legislatura": Legislatura, "Camara": "Diputados", "Total": len(IdsExternos)},
+            )
+            await Sess.commit()
+            RunId = Run.Id
+
+        async with ScraperDiputadosAsistencias(Legislatura=Legislatura) as Scraper:
+            for Index, IdExterno in enumerate(IdsExternos, start=1):
+                Asistencias = await Scraper.ScrapearDiputado(IdExterno)
+                async with SM() as Sess2:
+                    LegPerId = await ResolverLegisladorPeriodoId(
+                        Sess2, IdExterno, LegislaturaId, Fuente, Camara="Diputados"
+                    )
+                    if LegPerId is None:
+                        Stats.LegPeriodoNoEncontrado += 1
+                        continue
+                    await GuardarAsistenciasDiputado(
+                        Sess2, LegisladorPeriodoId=LegPerId,
+                        Asistencias=Asistencias, MapaSesiones=MapaSesiones,
+                        Fuente=Fuente, Stats=Stats,
+                    )
+                    await Sess2.commit()
+                if Index % 50 == 0 or Index == len(IdsExternos):
+                    logging.getLogger("CongresoMx.Backfill").info(
+                        "Asistencias Diputados: %d/%d (nuevas=%d errores=%d)",
+                        Index, len(IdsExternos), Stats.Nuevas, Stats.Errores,
+                    )
+
+        async with SM() as Sess3:
+            RunReload = (
+                await Sess3.execute(select(ScrapingRun).where(ScrapingRun.Id == RunId))
+            ).scalar_one()
+            FinalizarScrapingRun(
+                RunReload, Stats, "Success" if Stats.Errores == 0 else "Partial"
+            )
+            await Sess3.commit()
+    else:
+        from collections import defaultdict
+
+        from CongresoMx.Models import ScrapingRun, Sesion
+        from CongresoMx.Scrapers.Senado.Asistencias import ScraperSenadoAsistencias
+        from CongresoMx.Services.Asistencias import (
+            CargarMapaLegisladorPeriodoSenado,
+            GuardarAsistenciasSesionSenado,
+        )
+
+        async with SM() as Sess:
+            MapaLegPer = await CargarMapaLegisladorPeriodoSenado(
+                Sess, LegislaturaId, Fuente
+            )
+            SesionesRows = (
+                await Sess.execute(
+                    select(Sesion.Id, Sesion.Fecha, Sesion.Numero).where(
+                        Sesion.LegislaturaId == LegislaturaId,
+                        Sesion.Camara == "Senado",
+                        Sesion.Numero.is_not(None),
+                    ).order_by(Sesion.Fecha, Sesion.Numero)
+                )
+            ).all()
+            DbPorFecha: dict = defaultdict(list)
+            for Sid, Fecha, _Num in SesionesRows:
+                DbPorFecha[Fecha].append(Sid)
+
+        async with ScraperSenadoAsistencias(Legislatura=Legislatura) as Scraper:
+            Pairs: list[tuple] = []
+            for Anio in (1, 2):
+                Pairs.extend(await Scraper.ScrapearListadoPorAnio(Anio))
+            PorFecha: dict = defaultdict(list)
+            for Fecha, Num in Pairs:
+                PorFecha[Fecha].append(Num)
+            for Fecha in PorFecha:
+                PorFecha[Fecha].sort(key=lambda N: int(N))
+            PairsOrdered: list[tuple] = []
+            for Fecha in sorted(PorFecha):
+                for Num in PorFecha[Fecha]:
+                    PairsOrdered.append((Fecha, Num))
+
+            async with SM() as Sess:
+                Stats = StatsAsistencias()
+                Run = await IniciarScrapingRun(
+                    Sess, Tipo="Asistencias",
+                    Parametros={"Legislatura": Legislatura, "Camara": "Senado", "Total": len(PairsOrdered)},
+                )
+                await Sess.commit()
+                RunId = Run.Id
+
+            IndicePorFecha: dict = defaultdict(int)
+            for Index, (Fecha, Num) in enumerate(PairsOrdered, start=1):
+                DbSids = DbPorFecha.get(Fecha, [])
+                Idx = IndicePorFecha[Fecha]
+                IndicePorFecha[Fecha] += 1
+                if Idx >= len(DbSids):
+                    Stats.SesionNoEncontrada += 1
+                    continue
+                SesionId = DbSids[Idx]
+                try:
+                    Crudas = await Scraper.ScrapearSesion(Fecha, Num)
+                except Exception:
+                    Stats.Errores += 1
+                    continue
+                async with SM() as Sess2:
+                    await GuardarAsistenciasSesionSenado(
+                        Sess2, SesionId=SesionId,
+                        AsistenciasCrudas=Crudas, MapaLegisladorPeriodo=MapaLegPer,
+                        Fuente=Fuente, Stats=Stats,
+                    )
+                    await Sess2.commit()
+                if Index % 25 == 0 or Index == len(PairsOrdered):
+                    logging.getLogger("CongresoMx.Backfill").info(
+                        "Asistencias Senado: %d/%d (nuevas=%d errores=%d)",
+                        Index, len(PairsOrdered), Stats.Nuevas, Stats.Errores,
+                    )
+
+        async with SM() as Sess3:
+            RunReload = (
+                await Sess3.execute(select(ScrapingRun).where(ScrapingRun.Id == RunId))
+            ).scalar_one()
+            FinalizarScrapingRun(
+                RunReload, Stats, "Success" if Stats.Errores == 0 else "Partial"
+            )
+            await Sess3.commit()
+
+    return {
+        "Nuevas": Stats.Nuevas,
+        "Actualizadas": Stats.Actualizadas,
+        "CodigosDesconocidos": Stats.CodigosDesconocidos,
+        "Errores": Stats.Errores,
+    }
+
+
+# Orquestador: corre seed + scrapers en orden. Tolera errores parciales
+# (loguea y sigue). Idempotente: re-correr no duplica nada.
+@App.command(name="Backfill")
+def Backfill(
+    Legislatura: str = typer.Option("LXVI", help="Legislatura: LXVI."),
+    Camara: str = typer.Option("Ambas", help="Diputados | Senado | Ambas."),
+    Hasta: str = typer.Option(
+        "Asistencias", help="Seed | Legisladores | Sesiones | Asistencias."
+    ),
+) -> None:
+    import asyncio
+    import time
+
+    if Legislatura != "LXVI":
+        raise typer.BadParameter("Solo LXVI por ahora (LXV es trabajo pendiente)")
+    if Camara not in ("Diputados", "Senado", "Ambas"):
+        raise typer.BadParameter("--Camara: Diputados | Senado | Ambas")
+    if Hasta not in ("Seed", "Legisladores", "Sesiones", "Asistencias"):
+        raise typer.BadParameter("--Hasta: Seed | Legisladores | Sesiones | Asistencias")
+
+    Camaras = ["Diputados", "Senado"] if Camara == "Ambas" else [Camara]
+    Orden = ["Seed", "Legisladores", "Sesiones", "Asistencias"]
+    Hasta_Idx = Orden.index(Hasta)
+    Etapas = Orden[: Hasta_Idx + 1]
+
+    Log = logging.getLogger("CongresoMx.Backfill")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    async def Run() -> None:
+        from CongresoMx.Database import DisposeEngine, GetSessionMaker
+
+        Inicio = time.monotonic()
+        Resultados: dict[str, tuple[str, float, dict | str]] = {}
+
+        # Seed
+        if "Seed" in Etapas:
+            Log.info("== Seed catalogos ==")
+            T0 = time.monotonic()
+            try:
+                Res = await _BackfillSeed()
+                Resultados["Seed"] = ("OK", time.monotonic() - T0, Res)
+            except Exception as Exc:
+                Log.error("Seed fallo: %s", Exc, exc_info=True)
+                Resultados["Seed"] = ("FAIL", time.monotonic() - T0, str(Exc))
+
+        # Legisladores / Sesiones / Asistencias por camara
+        Helpers = {
+            "Legisladores": _BackfillLegisladores,
+            "Sesiones": _BackfillSesiones,
+            "Asistencias": _BackfillAsistencias,
+        }
+        for Etapa in ("Legisladores", "Sesiones", "Asistencias"):
+            if Etapa not in Etapas:
+                continue
+            for Cam in Camaras:
+                Nombre = f"{Cam} {Etapa}"
+                Log.info("== %s ==", Nombre)
+                T0 = time.monotonic()
+                try:
+                    Res = await Helpers[Etapa](Cam, Legislatura)
+                    Resultados[Nombre] = ("OK", time.monotonic() - T0, Res)
+                except Exception as Exc:
+                    Log.error("%s fallo: %s", Nombre, Exc, exc_info=True)
+                    Resultados[Nombre] = ("FAIL", time.monotonic() - T0, str(Exc))
+
+        Total = time.monotonic() - Inicio
+
+        # Reporte
+        typer.echo("")
+        typer.echo("== Resumen Backfill ==")
+        typer.echo(f"Tiempo total: {Total/60:.1f} min")
+        typer.echo("")
+        for Etapa, (Status, Dur, Info) in Resultados.items():
+            Sufijo = f" {Info}" if isinstance(Info, dict) else ""
+            typer.echo(f"  [{Status:<4}] {Dur:>6.1f}s  {Etapa}{Sufijo}")
+
+        # Counts finales
+        SM = GetSessionMaker()
+        async with SM() as Sess:
+            from sqlalchemy import func, select as sa_select
+
+            from CongresoMx.Models import (
+                Asistencia, Legislador, LegisladorPeriodo, Sesion,
+            )
+
+            CountLeg = (await Sess.execute(sa_select(func.count(Legislador.Id)))).scalar_one()
+            CountLP = (await Sess.execute(sa_select(func.count(LegisladorPeriodo.Id)))).scalar_one()
+            CountSes = (await Sess.execute(sa_select(func.count(Sesion.Id)))).scalar_one()
+            CountAsi = (await Sess.execute(sa_select(func.count(Asistencia.Id)))).scalar_one()
+
+        typer.echo("")
+        typer.echo("== Counts finales en DB ==")
+        typer.echo(f"  Legisladores:      {CountLeg:>7}")
+        typer.echo(f"  LegisladorPeriodo: {CountLP:>7}")
+        typer.echo(f"  Sesiones:          {CountSes:>7}")
+        typer.echo(f"  Asistencias:       {CountAsi:>7}")
+
+        # Query bonus: top 10 diputados con mas inasistencias en LXVI
+        if "Asistencias" in Etapas:
+            from sqlalchemy import text
+            async with SM() as Sess:
+                Rows = (
+                    await Sess.execute(
+                        text(
+                            "SELECT l.NombreCompleto, p.Siglas AS Partido, "
+                            "  e.Nombre AS Estado, COUNT(*) AS Ausencias "
+                            "FROM Asistencias a "
+                            "JOIN LegisladorPeriodo lp ON lp.Id=a.LegisladorPeriodoId "
+                            "JOIN Legisladores l ON l.Id=lp.LegisladorId "
+                            "LEFT JOIN Partidos p ON p.Id=lp.PartidoId "
+                            "LEFT JOIN Estados e ON e.Id=lp.EstadoId "
+                            "WHERE a.Estado='Ausente' AND lp.Camara='Diputados' "
+                            "  AND lp.LegislaturaId=2 "
+                            "GROUP BY l.Id ORDER BY Ausencias DESC LIMIT 10"
+                        )
+                    )
+                ).all()
+            typer.echo("")
+            typer.echo("== Top 10 diputados con mas inasistencias (Ausente) en LXVI ==")
+            for Nombre, Partido, Estado, N in Rows:
+                typer.echo(f"  {N:>3}  {Partido or '-':<8}  {Estado or '-':<22}  {Nombre}")
+
+        await DisposeEngine()
+
+    asyncio.run(Run())
+
+
 # Entrypoint para `python -m CongresoMx.Cli` o el script `congresomx`.
 def Main() -> None:
     logging.basicConfig(
