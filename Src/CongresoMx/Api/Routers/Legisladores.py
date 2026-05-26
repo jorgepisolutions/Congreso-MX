@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, select
 
 from CongresoMx.Api.Deps import (
     ApiKeyOrIp,
-    LimitParaKey,
+    LIMITE_DEFAULT,
     Limiter_,
     RequireApiKey,
     SessionDep,
@@ -36,7 +36,7 @@ Router = APIRouter(
 
 # Lista paginada de legisladores con filtros opcionales.
 @Router.get("", response_model=PaginatedResponse[LegisladorResumen])
-@Limiter_.limit(LimitParaKey, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
 async def ListarLegisladores(
     request: Request,
     Session_: SessionDep,
@@ -94,7 +94,7 @@ async def ListarLegisladores(
 
 # Detalle de un legislador con todos sus cargos (LegisladorPeriodo).
 @Router.get("/{LegisladorId}", response_model=LegisladorDetalle)
-@Limiter_.limit(LimitParaKey, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
 async def DetalleLegislador(
     request: Request,
     LegisladorId: int,
@@ -155,7 +155,7 @@ async def DetalleLegislador(
     "/{LegisladorId}/Asistencias",
     response_model=PaginatedResponse[AsistenciaEntry],
 )
-@Limiter_.limit(LimitParaKey, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
 async def AsistenciasDelLegislador(
     request: Request,
     LegisladorId: int,

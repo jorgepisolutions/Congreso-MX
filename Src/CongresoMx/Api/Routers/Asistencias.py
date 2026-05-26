@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, select
 
 from CongresoMx.Api.Deps import (
     ApiKeyOrIp,
-    LimitParaKey,
+    LIMITE_DEFAULT,
     Limiter_,
     RequireApiKey,
     SessionDep,
@@ -29,7 +29,7 @@ Router = APIRouter(
 # Lista global de asistencias con filtros. Por defecto limita a 50 para
 # no devolver 78,000 filas por accidente.
 @Router.get("", response_model=PaginatedResponse[AsistenciaEntry])
-@Limiter_.limit(LimitParaKey, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
 async def ListarAsistencias(
     request: Request,
     Session_: SessionDep,

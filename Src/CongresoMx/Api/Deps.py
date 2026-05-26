@@ -90,13 +90,10 @@ def ApiKeyOrIp(Request_: Request) -> str:
     return get_remote_address(Request_)
 
 
-# Resuelve el limit dinamico segun la metadata de la ApiKey. Si tiene
-# RateLimitPerMin custom, usa eso; si no, el default global (60/min).
-def LimitParaKey(Request_: Request) -> str:
-    Custom = getattr(Request_.state, "apikey_ratelimit", None)
-    if Custom and Custom > 0:
-        return f"{Custom}/minute"
-    return "60/minute"
+# Limit por defecto para todos los endpoints REST. El RateLimitPerMin
+# custom por ApiKey queda como mejora futura (slowapi lo soporta pero
+# complica la firma de decoradores).
+LIMITE_DEFAULT = "60/minute"
 
 
 ApiKeyDep = Annotated[ApiKey, Depends(RequireApiKey)]
