@@ -52,5 +52,4 @@ docs
 *.md
 !README.md
 
-# Scripts dev-only
-Scripts
+# Scripts/ se necesita en runtime para SeedCatalogos (importado por Cli._BackfillSeed)
