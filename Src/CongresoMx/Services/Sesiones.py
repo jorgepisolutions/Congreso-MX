@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from CongresoMx.Models import Legislatura, Periodo, ScrapingRun, Sesion
 from CongresoMx.Scrapers.Diputados.Sesiones import (
-    PERT_TO_PERIODO_KEY,
+    PERT_TO_PERIODO_KEY_POR_LEGISLATURA,
     SCRAPER_FUENTE,
     SesionCruda,
 )
@@ -184,8 +184,8 @@ def FinalizarScrapingRun(
     Run.Errores = Stats.Errores
 
 
-# Procesa las sesiones crudas: resuelve PeriodoId via PERT_TO_PERIODO_KEY,
-# upsert por fecha, audita en ScrapingRuns. Caller hace commit.
+# Procesa las sesiones crudas: resuelve PeriodoId via el mapa pert->key
+# de la legislatura, upsert por fecha, audita en ScrapingRuns. Caller commitea.
 async def GuardarBatchSesiones(
     Session: AsyncSession,
     Sesiones: list[SesionCruda],
@@ -201,6 +201,12 @@ async def GuardarBatchSesiones(
             f"Legislatura '{NumeroLegislatura}' no esta en DB. Corre el seed."
         )
 
+    PertToKey = PERT_TO_PERIODO_KEY_POR_LEGISLATURA.get(NumeroLegislatura)
+    if PertToKey is None:
+        raise RuntimeError(
+            f"No hay mapa pert->periodo definido para legislatura {NumeroLegislatura}"
+        )
+
     PeriodoMap = await _CargarPeriodos(Session, Leg.Id)
     Hoy = datetime.now(timezone.utc).date()
     Stats = StatsSesiones()
@@ -213,7 +219,7 @@ async def GuardarBatchSesiones(
 
     try:
         for SCruda in Sesiones:
-            Key = PERT_TO_PERIODO_KEY.get(SCruda.Pert)
+            Key = PertToKey.get(SCruda.Pert)
             if Key is None:
                 Logger.warning(
                     "Pert %d no mapeado a Periodo; skip sesion %s",

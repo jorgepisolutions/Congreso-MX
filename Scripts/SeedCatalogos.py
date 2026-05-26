@@ -21,6 +21,23 @@ LEGISLATURAS: list[tuple[str, int, date, date]] = [
 # Pert 2, 7, 10 estan vacios. Pert 4 y 5 son extraordinarios solapados.
 # Tupla: (LegislaturaNumero, AnioLegislativo, NumeroPeriodo, Tipo, FechaInicio, FechaFin).
 PERIODOS: list[tuple[str, int, int, str, date, date]] = [
+    # ---- LXV: 2021-09 a 2024-08, tres anios completos ----
+    ("LXV", 1, 1, "Ordinario",     date(2021, 9, 1),  date(2021, 12, 15)),
+    ("LXV", 1, 1, "Permanente",    date(2021, 12, 16),date(2022, 1, 31)),
+    ("LXV", 1, 2, "Ordinario",     date(2022, 2, 1),  date(2022, 4, 30)),
+    ("LXV", 1, 1, "Extraordinario",date(2022, 5, 1),  date(2022, 7, 31)),
+    ("LXV", 1, 2, "Permanente",    date(2022, 5, 1),  date(2022, 8, 31)),
+    ("LXV", 2, 1, "Ordinario",     date(2022, 9, 1),  date(2022, 12, 15)),
+    ("LXV", 2, 1, "Permanente",    date(2022, 12, 16),date(2023, 1, 31)),
+    ("LXV", 2, 2, "Ordinario",     date(2023, 2, 1),  date(2023, 4, 30)),
+    ("LXV", 2, 1, "Extraordinario",date(2023, 5, 1),  date(2023, 7, 31)),
+    ("LXV", 2, 2, "Permanente",    date(2023, 5, 1),  date(2023, 8, 31)),
+    ("LXV", 3, 1, "Ordinario",     date(2023, 9, 1),  date(2023, 12, 15)),
+    ("LXV", 3, 1, "Permanente",    date(2023, 12, 16),date(2024, 1, 31)),
+    ("LXV", 3, 2, "Ordinario",     date(2024, 2, 1),  date(2024, 4, 30)),
+    ("LXV", 3, 1, "Extraordinario",date(2024, 5, 1),  date(2024, 7, 31)),
+    ("LXV", 3, 2, "Permanente",    date(2024, 5, 1),  date(2024, 8, 31)),
+    # ---- LXVI: 2024-09 a 2027-08, en curso ----
     ("LXVI", 1, 1, "Ordinario",     date(2024, 9, 1),  date(2024, 12, 15)),
     ("LXVI", 1, 1, "Permanente",    date(2024, 12, 16),date(2025, 1, 31)),
     ("LXVI", 1, 2, "Ordinario",     date(2025, 2, 1),  date(2025, 4, 30)),

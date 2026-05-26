@@ -74,9 +74,13 @@ def ScrapeLegisladores(
 
     if Camara not in ("Diputados", "Senado"):
         raise typer.BadParameter(f"--Camara {Camara!r} no soportada (Diputados o Senado)")
-    if Legislatura != "LXVI":
+    if Legislatura not in ("LXV", "LXVI"):
         raise typer.BadParameter(
-            f"--Legislatura {Legislatura!r} aun no implementada (solo LXVI)"
+            f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
+        )
+    if Camara == "Senado" and Legislatura == "LXV":
+        raise typer.BadParameter(
+            "Senado LXV usa portal distinto; aun no implementado en CLI Scrape"
         )
 
     from CongresoMx.Database import DisposeEngine, GetSessionMaker
@@ -135,8 +139,14 @@ def ScrapeSesiones(
 
     if Camara not in ("Diputados", "Senado"):
         raise typer.BadParameter(f"--Camara {Camara!r} no soportada")
-    if Legislatura != "LXVI":
-        raise typer.BadParameter(f"--Legislatura {Legislatura!r} aun no implementada")
+    if Legislatura not in ("LXV", "LXVI"):
+        raise typer.BadParameter(
+            f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
+        )
+    if Camara == "Senado" and Legislatura == "LXV":
+        raise typer.BadParameter(
+            "Senado LXV usa portal distinto; aun no implementado en CLI Scrape"
+        )
 
     from CongresoMx.Database import DisposeEngine, GetSessionMaker
 
@@ -193,8 +203,14 @@ def ScrapeAsistencias(
 
     if Camara not in ("Diputados", "Senado"):
         raise typer.BadParameter("--Camara: Diputados o Senado")
-    if Legislatura != "LXVI":
-        raise typer.BadParameter("--Legislatura solo LXVI")
+    if Legislatura not in ("LXV", "LXVI"):
+        raise typer.BadParameter(
+            f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
+        )
+    if Camara == "Senado" and Legislatura == "LXV":
+        raise typer.BadParameter(
+            "Senado LXV usa portal distinto; aun no implementado"
+        )
     if Camara == "Senado" and Diputado:
         raise typer.BadParameter("--Diputado no aplica a Senado; usa --Backfill")
     if Camara == "Senado" and not Backfill:
@@ -698,10 +714,16 @@ def Backfill(
     import asyncio
     import time
 
-    if Legislatura != "LXVI":
-        raise typer.BadParameter("Solo LXVI por ahora (LXV es trabajo pendiente)")
+    if Legislatura not in ("LXV", "LXVI"):
+        raise typer.BadParameter(
+            f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
+        )
     if Camara not in ("Diputados", "Senado", "Ambas"):
         raise typer.BadParameter("--Camara: Diputados | Senado | Ambas")
+    if Legislatura == "LXV" and Camara in ("Senado", "Ambas"):
+        raise typer.BadParameter(
+            "Senado LXV usa portal distinto; usa --Camara Diputados para LXV"
+        )
     if Hasta not in ("Seed", "Legisladores", "Sesiones", "Asistencias"):
         raise typer.BadParameter("--Hasta: Seed | Legisladores | Sesiones | Asistencias")
 
@@ -785,7 +807,7 @@ def Backfill(
         typer.echo(f"  Sesiones:          {CountSes:>7}")
         typer.echo(f"  Asistencias:       {CountAsi:>7}")
 
-        # Query bonus: top 10 diputados con mas inasistencias en LXVI
+        # Query bonus: top 10 diputados con mas inasistencias en la legislatura
         if "Asistencias" in Etapas:
             from sqlalchemy import text
             async with SM() as Sess:
@@ -799,14 +821,16 @@ def Backfill(
                             "JOIN Legisladores l ON l.Id=lp.LegisladorId "
                             "LEFT JOIN Partidos p ON p.Id=lp.PartidoId "
                             "LEFT JOIN Estados e ON e.Id=lp.EstadoId "
+                            "JOIN Legislaturas leg ON leg.Id=lp.LegislaturaId "
                             "WHERE a.Estado='Ausente' AND lp.Camara='Diputados' "
-                            "  AND lp.LegislaturaId=2 "
+                            "  AND leg.Numero = :leg "
                             "GROUP BY l.Id ORDER BY Ausencias DESC LIMIT 10"
-                        )
+                        ),
+                        {"leg": Legislatura},
                     )
                 ).all()
             typer.echo("")
-            typer.echo("== Top 10 diputados con mas inasistencias (Ausente) en LXVI ==")
+            typer.echo(f"== Top 10 diputados con mas inasistencias (Ausente) en {Legislatura} ==")
             for Nombre, Partido, Estado, N in Rows:
                 typer.echo(f"  {N:>3}  {Partido or '-':<8}  {Estado or '-':<22}  {Nombre}")
 
