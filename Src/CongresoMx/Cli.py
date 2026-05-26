@@ -17,6 +17,13 @@ ScrapeApp = typer.Typer(
 )
 App.add_typer(ScrapeApp, name="Scrape")
 
+ApiApp = typer.Typer(
+    name="Api",
+    help="Administracion de la API: generacion y revocacion de keys.",
+    no_args_is_help=True,
+)
+App.add_typer(ApiApp, name="Api")
+
 Logger = logging.getLogger(__name__)
 
 
@@ -803,6 +810,123 @@ def Backfill(
             for Nombre, Partido, Estado, N in Rows:
                 typer.echo(f"  {N:>3}  {Partido or '-':<8}  {Estado or '-':<22}  {Nombre}")
 
+        await DisposeEngine()
+
+    asyncio.run(Run())
+
+
+# Genera un API key nuevo y lo guarda hasheado en la tabla ApiKeys.
+# Imprime el token UNA SOLA VEZ. Despues no se puede recuperar.
+@ApiApp.command(name="Genkey")
+def ApiGenkey(
+    Nombre: str = typer.Option(..., help="Nombre descriptivo de la key (ej. 'jorge-mac')."),
+    RateLimit: int = typer.Option(60, help="Limite de requests por minuto."),
+    DiasVigencia: int = typer.Option(0, help="0 = no expira; N = expira en N dias."),
+) -> None:
+    import asyncio
+    import secrets
+    from datetime import datetime, timedelta, timezone
+
+    from CongresoMx.Api.Deps import HashearKey
+    from CongresoMx.Database import DisposeEngine, GetSessionMaker
+    from CongresoMx.Models import ApiKey
+
+    async def Run() -> None:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        Token = secrets.token_urlsafe(32)
+        KeyHash = HashearKey(Token)
+        Expira = None
+        if DiasVigencia > 0:
+            Expira = (
+                datetime.now(timezone.utc) + timedelta(days=DiasVigencia)
+            ).replace(tzinfo=None)
+
+        SM = GetSessionMaker()
+        async with SM() as Sess:
+            Nueva = ApiKey(
+                KeyHash=KeyHash,
+                Nombre=Nombre,
+                Activo=True,
+                RateLimitPerMin=RateLimit,
+                ExpiresAt=Expira,
+            )
+            Sess.add(Nueva)
+            await Sess.commit()
+            await Sess.refresh(Nueva)
+            IdNuevo = Nueva.Id
+
+        typer.echo("")
+        typer.echo("API key generada. Guardala AHORA, no se mostrara de nuevo.")
+        typer.echo("")
+        typer.echo(f"  Id:           {IdNuevo}")
+        typer.echo(f"  Nombre:       {Nombre}")
+        typer.echo(f"  RateLimit:    {RateLimit} req/min")
+        typer.echo(f"  Expira:       {Expira.isoformat() if Expira else 'nunca'}")
+        typer.echo(f"  TOKEN:        {Token}")
+        typer.echo("")
+        typer.echo("Uso:")
+        typer.echo(f"  curl -H 'X-Api-Key: {Token}' http://10.200.3.80:8000/Legisladores")
+        await DisposeEngine()
+
+    asyncio.run(Run())
+
+
+# Lista las API keys existentes (sin mostrar el token).
+@ApiApp.command(name="Listkeys")
+def ApiListkeys() -> None:
+    import asyncio
+
+    from sqlalchemy import select
+
+    from CongresoMx.Database import DisposeEngine, GetSessionMaker
+    from CongresoMx.Models import ApiKey
+
+    async def Run() -> None:
+        SM = GetSessionMaker()
+        async with SM() as Sess:
+            Rows = (
+                await Sess.execute(
+                    select(
+                        ApiKey.Id, ApiKey.Nombre, ApiKey.Activo,
+                        ApiKey.RateLimitPerMin, ApiKey.CreatedAt,
+                        ApiKey.LastUsedAt, ApiKey.ExpiresAt,
+                    ).order_by(ApiKey.Id)
+                )
+            ).all()
+        typer.echo(f"{'Id':>4}  {'Activo':<7} {'RateLim':>8}  {'Nombre':<28}  {'LastUsed':<20}")
+        for Id_, Nom, Act, RL, _Cr, Lu, _Ex in Rows:
+            typer.echo(
+                f"{Id_:>4}  {'Si' if Act else 'No':<7} {RL or '-':>8}  "
+                f"{Nom[:28]:<28}  {str(Lu) if Lu else '-':<20}"
+            )
+        await DisposeEngine()
+
+    asyncio.run(Run())
+
+
+# Revoca una API key (la marca Activo=False).
+@ApiApp.command(name="Revoke")
+def ApiRevoke(Id: int = typer.Argument(..., help="Id de la API key a revocar.")) -> None:
+    import asyncio
+    from sqlalchemy import update
+
+    from CongresoMx.Database import DisposeEngine, GetSessionMaker
+    from CongresoMx.Models import ApiKey
+
+    async def Run() -> None:
+        SM = GetSessionMaker()
+        async with SM() as Sess:
+            Res = await Sess.execute(
+                update(ApiKey).where(ApiKey.Id == Id).values(Activo=False)
+            )
+            await Sess.commit()
+            if Res.rowcount == 0:
+                typer.echo(f"No existe ApiKey con Id={Id}")
+            else:
+                typer.echo(f"ApiKey Id={Id} revocada (Activo=False)")
         await DisposeEngine()
 
     asyncio.run(Run())
