@@ -78,10 +78,6 @@ def ScrapeLegisladores(
         raise typer.BadParameter(
             f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
         )
-    if Camara == "Senado" and Legislatura == "LXV":
-        raise typer.BadParameter(
-            "Senado LXV usa portal distinto; aun no implementado en CLI Scrape"
-        )
 
     from CongresoMx.Database import DisposeEngine, GetSessionMaker
     from CongresoMx.Services.Legisladores import GuardarBatch
@@ -96,6 +92,14 @@ def ScrapeLegisladores(
                 ScraperDiputadosLegisladores,
             )
             async with ScraperDiputadosLegisladores(Legislatura=Legislatura) as Scraper:
+                Mergeados = await Scraper.ScrapearLegislatura(
+                    Limit=Limit if Limit > 0 else None
+                )
+        elif Legislatura == "LXV":
+            from CongresoMx.Scrapers.Senado.LegisladoresLxv import (
+                ScraperSenadoLegisladoresLxv,
+            )
+            async with ScraperSenadoLegisladoresLxv(Legislatura=Legislatura) as Scraper:
                 Mergeados = await Scraper.ScrapearLegislatura(
                     Limit=Limit if Limit > 0 else None
                 )
@@ -143,10 +147,6 @@ def ScrapeSesiones(
         raise typer.BadParameter(
             f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
         )
-    if Camara == "Senado" and Legislatura == "LXV":
-        raise typer.BadParameter(
-            "Senado LXV usa portal distinto; aun no implementado en CLI Scrape"
-        )
 
     from CongresoMx.Database import DisposeEngine, GetSessionMaker
 
@@ -163,6 +163,17 @@ def ScrapeSesiones(
             SessionMaker = GetSessionMaker()
             async with SessionMaker() as Session:
                 Stats = await GuardarBatchSesiones(
+                    Session, Sesiones, NumeroLegislatura=Legislatura
+                )
+                await Session.commit()
+        elif Legislatura == "LXV":
+            from CongresoMx.Scrapers.Senado.SesionesLxv import ScraperSenadoSesionesLxv
+            from CongresoMx.Services.Sesiones import GuardarBatchSesionesSenado
+            async with ScraperSenadoSesionesLxv(Legislatura=Legislatura) as Scraper:
+                Sesiones = await Scraper.ScrapearSesiones()
+            SessionMaker = GetSessionMaker()
+            async with SessionMaker() as Session:
+                Stats = await GuardarBatchSesionesSenado(
                     Session, Sesiones, NumeroLegislatura=Legislatura
                 )
                 await Session.commit()
@@ -206,10 +217,6 @@ def ScrapeAsistencias(
     if Legislatura not in ("LXV", "LXVI"):
         raise typer.BadParameter(
             f"--Legislatura {Legislatura!r} no soportada (LXV, LXVI)"
-        )
-    if Camara == "Senado" and Legislatura == "LXV":
-        raise typer.BadParameter(
-            "Senado LXV usa portal distinto; aun no implementado"
         )
     if Camara == "Senado" and Diputado:
         raise typer.BadParameter("--Diputado no aplica a Senado; usa --Backfill")
@@ -408,6 +415,86 @@ def ScrapeAsistencias(
             await Sess3.commit()
         return Stats
 
+    async def RunSenadoLxv(SessionMaker, LegislaturaId: int) -> StatsAsistencias:
+        from CongresoMx.Models import ScrapingRun
+        from CongresoMx.Scrapers.Senado.AsistenciasLxv import (
+            ScraperSenadoAsistenciasLxv,
+        )
+        from CongresoMx.Services.Asistencias import (
+            CargarMapaLegisladorPeriodoSenado,
+            GuardarAsistenciasSesionSenado,
+        )
+
+        async with SessionMaker() as Sess:
+            MapaLegPer = await CargarMapaLegisladorPeriodoSenado(
+                Sess, LegislaturaId, Fuente
+            )
+            if not MapaLegPer:
+                raise RuntimeError(
+                    "No hay LegisladorPeriodo Senado LXV; corre "
+                    "Scrape Legisladores --Camara Senado --Legislatura LXV primero"
+                )
+            # LXV: las sesiones ya estan en DB con (Fecha, Numero) globales.
+            # Iteramos sobre ellas y descargamos su pagina inline.
+            SesionesRows = (
+                await Sess.execute(
+                    select(Sesion.Id, Sesion.Fecha, Sesion.Numero).where(
+                        Sesion.LegislaturaId == LegislaturaId,
+                        Sesion.Camara == "Senado",
+                        Sesion.Numero.is_not(None),
+                    ).order_by(Sesion.Fecha, Sesion.Numero)
+                )
+            ).all()
+            if not SesionesRows:
+                raise RuntimeError(
+                    "No hay Sesiones Senado LXV en DB; corre "
+                    "Scrape Sesiones --Camara Senado --Legislatura LXV primero"
+                )
+            typer.echo(f"Sesiones Senado LXV a procesar: {len(SesionesRows)}")
+            Stats = StatsAsistencias()
+            Run = await IniciarScrapingRun(
+                Sess, Tipo="Asistencias",
+                Parametros={
+                    "Legislatura": Legislatura,
+                    "Camara": "Senado",
+                    "Total": len(SesionesRows),
+                },
+            )
+            await Sess.commit()
+            RunId = Run.Id
+
+        async with ScraperSenadoAsistenciasLxv(Legislatura=Legislatura) as Scraper:
+            for Index, (SesionId, Fecha, Numero) in enumerate(SesionesRows, start=1):
+                try:
+                    Crudas = await Scraper.ScrapearSesion(Fecha, Numero)
+                except Exception as Exc:
+                    logging.getLogger("CongresoMx.Cli").error(
+                        "Error scrape sesion LXV %s/%s: %s", Fecha, Numero, Exc,
+                    )
+                    Stats.Errores += 1
+                    continue
+                async with SessionMaker() as Sess2:
+                    await GuardarAsistenciasSesionSenado(
+                        Sess2, SesionId=SesionId,
+                        AsistenciasCrudas=Crudas, MapaLegisladorPeriodo=MapaLegPer,
+                        Fuente=Fuente, Stats=Stats,
+                    )
+                    await Sess2.commit()
+                if Index % 25 == 0 or Index == len(SesionesRows):
+                    logging.getLogger("CongresoMx.Cli").info(
+                        "Progreso LXV: %d/%d sesiones (nuevas=%d errores=%d)",
+                        Index, len(SesionesRows), Stats.Nuevas, Stats.Errores,
+                    )
+
+        async with SessionMaker() as Sess3:
+            RunReload = (await Sess3.execute(
+                select(ScrapingRun).where(ScrapingRun.Id == RunId)
+            )).scalar_one()
+            FinalizarScrapingRun(RunReload, Stats,
+                "Success" if Stats.Errores == 0 else "Partial")
+            await Sess3.commit()
+        return Stats
+
     async def Run() -> None:
         logging.basicConfig(
             level=logging.INFO,
@@ -424,6 +511,8 @@ def ScrapeAsistencias(
 
         if Camara == "Diputados":
             Stats = await RunDiputados(SessionMaker, LegislaturaId)
+        elif Legislatura == "LXV":
+            Stats = await RunSenadoLxv(SessionMaker, LegislaturaId)
         else:
             Stats = await RunSenado(SessionMaker, LegislaturaId)
 
@@ -465,6 +554,12 @@ async def _BackfillLegisladores(Camara: str, Legislatura: str) -> dict:
         )
         async with ScraperDiputadosLegisladores(Legislatura=Legislatura) as Scraper:
             Mergeados = await Scraper.ScrapearLegislatura(Limit=None)
+    elif Legislatura == "LXV":
+        from CongresoMx.Scrapers.Senado.LegisladoresLxv import (
+            ScraperSenadoLegisladoresLxv,
+        )
+        async with ScraperSenadoLegisladoresLxv(Legislatura=Legislatura) as Scraper:
+            Mergeados = await Scraper.ScrapearLegislatura(Limit=None)
     else:
         from CongresoMx.Scrapers.Senado.Legisladores import ScraperSenadoLegisladores
         async with ScraperSenadoLegisladores(Legislatura=Legislatura) as Scraper:
@@ -496,6 +591,16 @@ async def _BackfillSesiones(Camara: str, Legislatura: str) -> dict:
             Sesiones = await Scraper.ScrapearCalendarioCompleto()
         async with SM() as Sess:
             Stats = await GuardarBatchSesiones(
+                Sess, Sesiones, NumeroLegislatura=Legislatura
+            )
+            await Sess.commit()
+    elif Legislatura == "LXV":
+        from CongresoMx.Scrapers.Senado.SesionesLxv import ScraperSenadoSesionesLxv
+        from CongresoMx.Services.Sesiones import GuardarBatchSesionesSenado
+        async with ScraperSenadoSesionesLxv(Legislatura=Legislatura) as Scraper:
+            Sesiones = await Scraper.ScrapearSesiones()
+        async with SM() as Sess:
+            Stats = await GuardarBatchSesionesSenado(
                 Sess, Sesiones, NumeroLegislatura=Legislatura
             )
             await Sess.commit()
@@ -597,6 +702,68 @@ async def _BackfillAsistencias(Camara: str, Legislatura: str) -> dict:
                     logging.getLogger("CongresoMx.Backfill").info(
                         "Asistencias Diputados: %d/%d (nuevas=%d errores=%d)",
                         Index, len(IdsExternos), Stats.Nuevas, Stats.Errores,
+                    )
+
+        async with SM() as Sess3:
+            RunReload = (
+                await Sess3.execute(select(ScrapingRun).where(ScrapingRun.Id == RunId))
+            ).scalar_one()
+            FinalizarScrapingRun(
+                RunReload, Stats, "Success" if Stats.Errores == 0 else "Partial"
+            )
+            await Sess3.commit()
+    elif Legislatura == "LXV":
+        from CongresoMx.Models import ScrapingRun, Sesion
+        from CongresoMx.Scrapers.Senado.AsistenciasLxv import (
+            ScraperSenadoAsistenciasLxv,
+        )
+        from CongresoMx.Services.Asistencias import (
+            CargarMapaLegisladorPeriodoSenado,
+            GuardarAsistenciasSesionSenado,
+        )
+
+        async with SM() as Sess:
+            MapaLegPer = await CargarMapaLegisladorPeriodoSenado(
+                Sess, LegislaturaId, Fuente
+            )
+            SesionesRows = (
+                await Sess.execute(
+                    select(Sesion.Id, Sesion.Fecha, Sesion.Numero).where(
+                        Sesion.LegislaturaId == LegislaturaId,
+                        Sesion.Camara == "Senado",
+                        Sesion.Numero.is_not(None),
+                    ).order_by(Sesion.Fecha, Sesion.Numero)
+                )
+            ).all()
+            Stats = StatsAsistencias()
+            Run = await IniciarScrapingRun(
+                Sess, Tipo="Asistencias",
+                Parametros={"Legislatura": Legislatura, "Camara": "Senado", "Total": len(SesionesRows)},
+            )
+            await Sess.commit()
+            RunId = Run.Id
+
+        async with ScraperSenadoAsistenciasLxv(Legislatura=Legislatura) as Scraper:
+            for Index, (SesionId, Fecha, Numero) in enumerate(SesionesRows, start=1):
+                try:
+                    Crudas = await Scraper.ScrapearSesion(Fecha, Numero)
+                except Exception as Exc:
+                    logging.getLogger("CongresoMx.Backfill").error(
+                        "Error scrape sesion LXV %s/%s: %s", Fecha, Numero, Exc,
+                    )
+                    Stats.Errores += 1
+                    continue
+                async with SM() as Sess2:
+                    await GuardarAsistenciasSesionSenado(
+                        Sess2, SesionId=SesionId,
+                        AsistenciasCrudas=Crudas, MapaLegisladorPeriodo=MapaLegPer,
+                        Fuente=Fuente, Stats=Stats,
+                    )
+                    await Sess2.commit()
+                if Index % 25 == 0 or Index == len(SesionesRows):
+                    logging.getLogger("CongresoMx.Backfill").info(
+                        "Asistencias Senado LXV: %d/%d (nuevas=%d errores=%d)",
+                        Index, len(SesionesRows), Stats.Nuevas, Stats.Errores,
                     )
 
         async with SM() as Sess3:
@@ -720,10 +887,6 @@ def Backfill(
         )
     if Camara not in ("Diputados", "Senado", "Ambas"):
         raise typer.BadParameter("--Camara: Diputados | Senado | Ambas")
-    if Legislatura == "LXV" and Camara in ("Senado", "Ambas"):
-        raise typer.BadParameter(
-            "Senado LXV usa portal distinto; usa --Camara Diputados para LXV"
-        )
     if Hasta not in ("Seed", "Legisladores", "Sesiones", "Asistencias"):
         raise typer.BadParameter("--Hasta: Seed | Legisladores | Sesiones | Asistencias")
 

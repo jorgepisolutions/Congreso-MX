@@ -38,13 +38,18 @@ CODIGO_A_ESTADO: dict[str, str] = {
 # Senado usa textos descriptivos en mayusculas, no codigos cortos.
 REGISTRO_SENADO_A_ESTADO: dict[str, str] = {
     "asistencia": "Presente",
+    "asistencia instruida": "Presente",
     "ausente": "Ausente",
     "ausencia": "Ausente",
     "inasistencia": "Ausente",
     "inasistencia justificada": "Justificado",
     "justificacion": "Justificado",
+    "justificada": "Justificado",
     "comision oficial": "ComisionOficial",
+    "oficial comision": "ComisionOficial",
+    "en comision oficial": "ComisionOficial",
     "licencia": "Licencia",
+    "en licencia": "Licencia",
 }
 
 
