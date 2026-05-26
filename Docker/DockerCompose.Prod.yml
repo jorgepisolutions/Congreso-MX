@@ -1,0 +1,43 @@
+# Override para deploy en hosting definitivo (NO servidor temporal).
+# Pega Caddy delante de AppApi para terminar HTTPS, quita la exposicion
+# directa del puerto 8000, expone solo 80/443.
+#
+# Uso (cuando ya tengas dominio + DNS apuntando a la IP del VPS):
+#   docker compose -f Docker/DockerCompose.yml \
+#                  -f Docker/DockerCompose.Prod.yml \
+#                  up -d --build
+
+services:
+  Mariadb:
+    # En prod NO exponer Mariadb al host (queda solo en la red interna).
+    ports: !override []
+
+  Redis:
+    ports: !override []
+
+  AppApi:
+    # AppApi no se expone al host; solo accesible a traves de Caddy via
+    # la red interna CongresoMxNet.
+    ports: !override []
+
+  Caddy:
+    image: caddy:2
+    container_name: CongresoMxCaddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3 sobre QUIC
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - CaddyData:/data
+      - CaddyConfig:/config
+    depends_on:
+      AppApi:
+        condition: service_healthy
+    networks:
+      - CongresoMxNet
+
+volumes:
+  CaddyData:
+  CaddyConfig:

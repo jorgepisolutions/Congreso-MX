@@ -1,0 +1,51 @@
+# Caddyfile para CongresoMx
+#
+# Reemplaza congresomx.example.com por tu dominio real. Caddy gestiona los
+# certificados Let's Encrypt automaticamente cuando el dominio resuelve al
+# IP del servidor.
+#
+# Para activar en local sin dominio, usa ":80" en vez del nombre.
+
+congresomx.example.com {
+    # Email de Let's Encrypt para notificaciones de expiracion.
+    # tls jorgepi@pi-solutions.tech
+
+    # Logs estructurados en JSON al stdout del contenedor.
+    log {
+        output stdout
+        format json
+        level INFO
+    }
+
+    # Compresion de respuestas.
+    encode gzip zstd
+
+    # Headers de seguridad razonables.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # WebSocket pasa por la misma ruta /Ws/Asistencias. Caddy maneja el
+    # upgrade HTTP -> WS transparentemente al hacer reverse_proxy.
+    reverse_proxy AppApi:8000 {
+        # Timeouts generosos para el WebSocket de larga duracion.
+        transport http {
+            read_timeout 1h
+            write_timeout 1h
+        }
+    }
+}
+
+# Bloque global de configuracion. Comentar si no se necesita.
+{
+    # email global para los certs
+    email jorgepi@pi-solutions.tech
+
+    # Para entornos de testing, descomenta para usar staging de Let's Encrypt
+    # (evita rate limits si pruebas muchas veces):
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
