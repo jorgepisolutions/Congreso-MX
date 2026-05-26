@@ -62,9 +62,9 @@ PARTIDO_NORMALIZACION: dict[str, str] = {
 TIPO_ELECCION_KEYWORDS: list[tuple[str, str]] = [
     ("primera minoria", "PrimeraMinoria"),
     ("primera minoría", "PrimeraMinoria"),
-    ("lista nacional", "ListaNacional"),
-    ("representacion proporcional", "ListaNacional"),
-    ("representación proporcional", "ListaNacional"),
+    ("lista nacional", "RepresentacionProporcional"),
+    ("representacion proporcional", "RepresentacionProporcional"),
+    ("representación proporcional", "RepresentacionProporcional"),
     ("mayoria relativa", "MayoriaRelativa"),
     ("mayoría relativa", "MayoriaRelativa"),
 ]

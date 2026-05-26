@@ -17,11 +17,16 @@ SCRAPER_FUENTE = "SENADO_LXV"
 
 
 # Combina un listado-crudo + tipo eleccion en un LegisladorMergeado reusable.
-# Distrito y Circunscripcion quedan None (no aplican en Senado).
+# Distrito y Circunscripcion quedan None (no aplican en Senado). Si la
+# Estado="Lista Nacional", forzamos TipoEleccion=RepresentacionProporcional
+# por consistencia con la organizacion del Senado.
 def Mergear(
     Listado: SenadorLxvListadoCrudo, TipoEleccion: str | None
 ) -> LegisladorMergeado:
     Nombre, ApPaterno, ApMaterno = PartirNombreHispano(Listado.NombreCompleto)
+    TipoFinal = TipoEleccion or "MayoriaRelativa"
+    if Listado.Estado.strip().lower() == "lista nacional":
+        TipoFinal = "RepresentacionProporcional"
     return LegisladorMergeado(
         IdExterno=Listado.IdExterno,
         NombreCompleto=Listado.NombreCompleto,
@@ -31,7 +36,7 @@ def Mergear(
         NombreHash=NombreHashSha256(Listado.NombreCompleto),
         PartidoSiglas=Listado.PartidoSiglas,
         Estado=Listado.Estado,
-        TipoEleccion=TipoEleccion or "MayoriaRelativa",
+        TipoEleccion=TipoFinal,
         Distrito=None,
         Circunscripcion=None,
         Curul=None,
