@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, func, select
 
 from CongresoMx.Api.Deps import (
-    ApiKeyOrIp,
+
     LIMITE_DEFAULT,
     Limiter_,
     RequireApiKey,
@@ -35,7 +35,7 @@ Router = APIRouter(
 
 # Lista paginada de sesiones con filtros opcionales.
 @Router.get("", response_model=PaginatedResponse[SesionResumen])
-@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT)
 async def ListarSesiones(
     request: Request,
     Session_: SessionDep,
@@ -79,7 +79,7 @@ async def ListarSesiones(
 
 # Detalle de una sesion incluyendo metadata de Periodo y Legislatura.
 @Router.get("/{SesionId}", response_model=SesionDetalle)
-@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT)
 async def DetalleSesion(
     request: Request,
     SesionId: int,
@@ -125,7 +125,7 @@ async def DetalleSesion(
     "/{SesionId}/Asistencias",
     response_model=PaginatedResponse[AsistenciaEntry],
 )
-@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT)
 async def AsistenciasDeSesion(
     request: Request,
     SesionId: int,

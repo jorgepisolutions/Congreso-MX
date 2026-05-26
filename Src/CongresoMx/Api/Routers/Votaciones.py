@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 
 from CongresoMx.Api.Deps import (
-    ApiKeyOrIp,
+
     LIMITE_DEFAULT,
     Limiter_,
     RequireApiKey,
@@ -22,7 +22,7 @@ Router = APIRouter(
 # asistencias, no votos). Cuando scrapeemos votaciones, este endpoint
 # las exposera sin cambios de codigo.
 @Router.get("", response_model=PaginatedResponse[VotacionEntry])
-@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT)
 async def ListarVotaciones(
     request: Request,
     Session_: SessionDep,

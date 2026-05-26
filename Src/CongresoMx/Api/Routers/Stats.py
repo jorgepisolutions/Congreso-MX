@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import case, func, select
 
 from CongresoMx.Api.Deps import (
-    ApiKeyOrIp,
+
     LIMITE_DEFAULT,
     Limiter_,
     RequireApiKey,
@@ -27,7 +27,7 @@ Router = APIRouter(
 
 # Distribucion de asistencia por partido + camara para una legislatura.
 @Router.get("/PorPartido", response_model=list[StatPorPartido])
-@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT)
 async def StatsPorPartido(
     request: Request,
     Session_: SessionDep,
@@ -66,7 +66,7 @@ async def StatsPorPartido(
 
 # Top N legisladores con mas inasistencias (Ausente + Justificado).
 @Router.get("/TopInasistentes", response_model=list[StatInasistente])
-@Limiter_.limit(LIMITE_DEFAULT, key_func=ApiKeyOrIp)
+@Limiter_.limit(LIMITE_DEFAULT)
 async def TopInasistentes(
     request: Request,
     Session_: SessionDep,
