@@ -11,13 +11,17 @@ URL_DATOS_MINUTO = (
     "https://pleno.senado.gob.mx/webservice/sesion_al_minuto/envivo/datosMinuto.php"
 )
 HTTP_TIMEOUT = 15.0
+# El WAF del Senado bloquea con Accept: application/json, asi que mandamos
+# headers de navegador estandar. El endpoint devuelve JSON en el body aunque
+# diga Content-Type: text/html.
 BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     ),
     "Referer": "https://www.senado.gob.mx/66/sesion_al_minuto",
-    "Accept": "application/json, text/plain, */*",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
 }
 
 # Frases que indican que la sesion ya termino (no esta en curso).
@@ -55,12 +59,22 @@ def _Normalizar(Texto: str) -> str:
 # "concluida" o equivalente, esta sesion termino. Si la fecha del portal
 # es distinta de hoy CDMX, tampoco hay sesion.
 async def ConsultarEstadoSenado() -> EstadoSesionSenado:
+    import json as _json
     async with httpx.AsyncClient(
         headers=BROWSER_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True
     ) as Client:
         Resp = await Client.get(URL_DATOS_MINUTO)
         Resp.raise_for_status()
-        Data = Resp.json()
+        # Content-Type a veces dice text/html pero el body es JSON. Parseamos
+        # el text directamente con json.loads en vez de Resp.json().
+        Body = Resp.text.strip()
+        if not Body or not Body.startswith("{"):
+            Logger.warning("datosMinuto.php no devolvio JSON: %r", Body[:200])
+            return EstadoSesionSenado(
+                HayActiva=False, FechaPortal=None, PuntoActual="",
+                TramiteActual="", DatosRaw={},
+            )
+        Data = _json.loads(Body)
 
     PuntoRaw = (Data.get("punto") or "").strip()
     TramiteRaw = (Data.get("tramite") or "").strip()
