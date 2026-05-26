@@ -34,6 +34,9 @@ RUN groupadd -r congresomx && \
 WORKDIR /app
 
 COPY --from=builder --chown=congresomx:congresomx /app /app
+# Scripts/ no es parte del paquete instalado pero el helper _BackfillSeed
+# lo importa al vuelo via sys.path. Lo copiamos al runtime tambien.
+COPY --chown=congresomx:congresomx Scripts ./Scripts
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
